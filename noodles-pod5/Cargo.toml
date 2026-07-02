@@ -15,6 +15,7 @@ categories = ["parser-implementations", "science::bioinformatics"]
 backend = []
 
 [dependencies]
+arc-swap = "1.9.2"
 
 [dev-dependencies]
 
