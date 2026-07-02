@@ -20,4 +20,18 @@ mod sealed {
     pub trait Seal {}
 }
 
+/// A trait used to restrict generic parameters to proper batches.
+/// It is implemented for the [`ReadBatch`], the [`RunInfoBatch`] and the [`SignalBatch`].
 pub trait Batch: sealed::Seal {}
+
+impl sealed::Seal for RunInfoBatch {}
+
+impl Batch for RunInfoBatch {}
+
+impl sealed::Seal for ReadBatch {}
+
+impl Batch for ReadBatch {}
+
+impl sealed::Seal for SignalBatch {}
+
+impl Batch for SignalBatch {}
