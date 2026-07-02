@@ -51,6 +51,10 @@ pub use noodles_gtf as gtf;
 #[doc(inline)]
 pub use noodles_htsget as htsget;
 
+#[cfg(feature = "pod5")]
+#[doc(inline)]
+pub use noodles_pod5 as pod5;
+
 #[cfg(feature = "refget")]
 #[doc(inline)]
 pub use noodles_refget as refget;
