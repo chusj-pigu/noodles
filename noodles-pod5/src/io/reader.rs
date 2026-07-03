@@ -225,6 +225,7 @@ pub(crate) use self::internal::{
     ConcurrencyMode,
     Local,
     Atomic,
+    BatchAccess,
 };
 
 pub struct ReaderBuilder;
