@@ -189,19 +189,28 @@ mod internal {
 
     impl LocalAccess for LeasedBatchRef {}
 
-    pub trait ConcurrencyMode: sealed::ConcurrencySeal {}
+    pub trait ConcurrencyMode: sealed::ConcurrencySeal {
+        type LocalAccess: LocalAccess;
+        type BatchHandle: BatchHandle;
+    }
 
     pub struct Local;
 
     impl sealed::ConcurrencySeal for Local {}
 
-    impl ConcurrencyMode for Local {}
+    impl ConcurrencyMode for Local {
+        type LocalAccess = LocalBatchHandle;
+        type BatchHandle = LocalBatchHandle;
+    }
 
     pub struct Atomic;
 
     impl sealed::ConcurrencySeal for Atomic {}
 
-    impl ConcurrencyMode for Atomic {}
+    impl ConcurrencyMode for Atomic {
+        type LocalAccess = LeasedBatchRef;
+        type BatchHandle = AtomicBatchHandle;
+    }
 }
 
 #[cfg(feature = "backend")]
