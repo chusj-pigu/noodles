@@ -9,6 +9,13 @@
     `MultithreadedReader` and `MultithreadedWriter` now use rayon's default
     global thread pool for tasks.
 
+### Deprecated
+
+  * bgzf/io: Deprecate `MultithreadedReader::with_worker_count` and
+    `MultithreadedWriter::with_worker_count`.
+
+    Use `rayon::ThreadPoolBuilder` to configure the thread pool.
+
 ### Fixed
 
   * bgzf/io/reader/frame: Validate `ISIZE` ([#401]).

@@ -38,7 +38,6 @@ struct Buffer {
 /// the inner reader on its own thread to read raw frames asynchronously.
 pub struct MultithreadedReader<R> {
     state: State<R>,
-    worker_count: NonZero<usize>,
     position: u64,
     buffer: Buffer,
 }
@@ -115,7 +114,11 @@ where
     /// let reader = bgzf::io::MultithreadedReader::new(io::empty());
     /// ```
     pub fn new(inner: R) -> Self {
-        Self::with_worker_count(NonZero::<usize>::MIN, inner)
+        Self {
+            state: State::Paused(inner),
+            position: 0,
+            buffer: Buffer::default(),
+        }
     }
 
     /// Creates a multithreaded BGZF reader with a worker count.
@@ -131,13 +134,12 @@ where
     ///     io::empty(),
     /// );
     /// ```
-    pub fn with_worker_count(worker_count: NonZero<usize>, inner: R) -> Self {
-        Self {
-            state: State::Paused(inner),
-            worker_count,
-            position: 0,
-            buffer: Buffer::default(),
-        }
+    #[deprecated(
+        since = "0.48.0",
+        note = "Use `rayon::ThreadPoolBuilder` to configure the thread pool."
+    )]
+    pub fn with_worker_count(_worker_count: NonZero<usize>, inner: R) -> Self {
+        Self::new(inner)
     }
 
     /// Returns a mutable reference to the underlying reader.
@@ -170,7 +172,7 @@ where
             panic!("invalid state");
         };
 
-        let worker_count = self.worker_count.get();
+        let worker_count = rayon::current_num_threads();
 
         let (read_tx, read_rx) = crossbeam_channel::bounded(worker_count);
         let (recycle_tx, recycle_rx) = crossbeam_channel::bounded(worker_count);

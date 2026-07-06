@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+  * csi/io/reader/index/header: Resolve end position index as missing when it
+    matches the start position index.
+
+    This changes the start and end position indices from `(i, Some(j))` to `(i,
+    None)` when `i == j`. An end position index of 0 continues to resolve to
+    `None`.
+
+  * csi/io/reader/index/header: Validate end position index value based on
+    format.
+
+  * csi/io/writer/index/header: Write missing end position index value based on
+    format.
+
+    If the end position index is missing, a specialized value is written for
+    SAM and VCF; otherwise, the end position index is set to the start position
+    index.
+
 ## 0.56.0 - 2026-05-06
 
 ### Changed

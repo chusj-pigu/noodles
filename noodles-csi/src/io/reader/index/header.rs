@@ -3,11 +3,14 @@ mod reference_sequence_names;
 use std::{
     error, fmt,
     io::{self, Read},
-    num,
+    num::{self, NonZero},
 };
 
 use self::reference_sequence_names::read_reference_sequence_names;
-use crate::binning_index::index::{Header, header::format};
+use crate::binning_index::index::{
+    Header,
+    header::{Format, format},
+};
 
 /// An error returned when a CSI header fails to be read.
 #[derive(Debug)]
@@ -20,14 +23,12 @@ pub enum ReadError {
     InvalidFormat(format::TryFromIntError),
     /// The header reference sequence index is invalid.
     InvalidReferenceSequenceNameIndex(num::TryFromIntError),
-    /// The header reference sequence index value is invalid.
-    InvalidReferenceSequenceNameIndexValue,
     /// The header start position index is invalid.
     InvalidStartPositionIndex(num::TryFromIntError),
-    /// The header start position index value is invalid.
-    InvalidStartPositionIndexValue,
     /// The header end position index is invalid.
     InvalidEndPositionIndex(num::TryFromIntError),
+    /// The header end position index value is invalid.
+    InvalidEndPositionIndexValue,
     /// The header line comment prefix is invalid.
     InvalidLineCommentPrefix(num::TryFromIntError),
     /// The header line skip count is invalid.
@@ -62,12 +63,9 @@ impl fmt::Display for ReadError {
             Self::InvalidReferenceSequenceNameIndex(_) => {
                 write!(f, "invalid reference sequence name index")
             }
-            Self::InvalidReferenceSequenceNameIndexValue => {
-                write!(f, "invalid reference sequence name index value")
-            }
             Self::InvalidStartPositionIndex(_) => write!(f, "invalid start position index"),
-            Self::InvalidStartPositionIndexValue => write!(f, "invalid start position index value"),
             Self::InvalidEndPositionIndex(_) => write!(f, "invalid end position index"),
+            Self::InvalidEndPositionIndexValue => write!(f, "invalid end position index value"),
             Self::InvalidLineCommentPrefix(_) => write!(f, "invalid line comment prefix"),
             Self::InvalidLineSkipCount(_) => write!(f, "invalid line skip count"),
             Self::InvalidReferenceSequenceNames(_) => write!(f, "invalid reference sequence names"),
@@ -101,14 +99,12 @@ pub fn read_header<R>(reader: &mut R) -> Result<Header, ReadError>
 where
     R: Read,
 {
-    use crate::binning_index::index::header::Format;
-
     let format =
         read_i32_le(reader).and_then(|n| Format::try_from(n).map_err(ReadError::InvalidFormat))?;
 
     let col_seq = read_reference_sequence_name_index(reader)?;
     let col_beg = read_start_position_index(reader)?;
-    let col_end = read_end_position_index(reader)?;
+    let col_end = read_end_position_index(reader, format, col_beg)?;
 
     let meta = read_i32_le(reader)
         .and_then(|b| u8::try_from(b).map_err(ReadError::InvalidLineCommentPrefix))?;
@@ -143,11 +139,9 @@ where
 {
     read_i32_le(reader).and_then(|i| {
         usize::try_from(i)
+            .and_then(NonZero::try_from)
+            .map(|n| n.get() - 1)
             .map_err(ReadError::InvalidReferenceSequenceNameIndex)
-            .and_then(|n| {
-                n.checked_sub(1)
-                    .ok_or(ReadError::InvalidReferenceSequenceNameIndexValue)
-            })
     })
 }
 
@@ -157,28 +151,42 @@ where
 {
     read_i32_le(reader).and_then(|i| {
         usize::try_from(i)
+            .and_then(NonZero::try_from)
+            .map(|n| n.get() - 1)
             .map_err(ReadError::InvalidStartPositionIndex)
-            .and_then(|n| {
-                n.checked_sub(1)
-                    .ok_or(ReadError::InvalidStartPositionIndexValue)
-            })
     })
 }
 
-fn read_end_position_index<R>(reader: &mut R) -> Result<Option<usize>, ReadError>
+fn read_end_position_index<R>(
+    reader: &mut R,
+    format: Format,
+    start_position_index: usize,
+) -> Result<Option<usize>, ReadError>
 where
     R: Read,
 {
-    read_i32_le(reader).and_then(|i| match i {
-        0 => Ok(None),
-        _ => usize::try_from(i)
-            .map(|n| {
-                // SAFETY: `n` is > 0.
-                n - 1
-            })
-            .map(Some)
-            .map_err(ReadError::InvalidEndPositionIndex),
-    })
+    const SPECIALIZED_END_VALUE: i32 = 0;
+
+    let n = read_i32_le(reader)?;
+
+    if matches!(format, Format::Sam | Format::Vcf) {
+        if n == SPECIALIZED_END_VALUE {
+            Ok(None)
+        } else {
+            Err(ReadError::InvalidEndPositionIndexValue)
+        }
+    } else {
+        let i = usize::try_from(n)
+            .and_then(NonZero::try_from)
+            .map(|m| m.get() - 1)
+            .map_err(ReadError::InvalidEndPositionIndex)?;
+
+        if i == start_position_index {
+            Ok(None)
+        } else {
+            Ok(Some(i))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +194,7 @@ mod tests {
     use bstr::BString;
 
     use super::*;
+    use crate::binning_index::index::header::format::CoordinateSystem;
 
     #[test]
     fn test_read_aux() -> Result<(), ReadError> {
@@ -223,14 +232,18 @@ mod tests {
 
     #[test]
     fn test_read_reference_sequence_name_index() -> Result<(), ReadError> {
-        let data = [0x01, 0x00, 0x00, 0x00]; // col_seq = 1
-        let mut reader = &data[..];
-        assert_eq!(read_reference_sequence_name_index(&mut reader)?, 0);
+        let src = [0x01, 0x00, 0x00, 0x00];
+        assert_eq!(read_reference_sequence_name_index(&mut &src[..])?, 0);
 
-        let data = [0xff, 0xff, 0xff, 0xff]; // col_seq = -1
-        let mut reader = &data[..];
+        let src = [0xff, 0xff, 0xff, 0xff];
         assert!(matches!(
-            read_reference_sequence_name_index(&mut reader),
+            read_reference_sequence_name_index(&mut &src[..]),
+            Err(ReadError::InvalidReferenceSequenceNameIndex(_))
+        ));
+
+        let src = [0x00, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            read_reference_sequence_name_index(&mut &src[..]),
             Err(ReadError::InvalidReferenceSequenceNameIndex(_))
         ));
 
@@ -239,14 +252,18 @@ mod tests {
 
     #[test]
     fn test_read_start_position_index() -> Result<(), ReadError> {
-        let data = [0x04, 0x00, 0x00, 0x00]; // col_beg = 4
-        let mut reader = &data[..];
-        assert_eq!(read_start_position_index(&mut reader)?, 3);
+        let src = [0x06, 0x00, 0x00, 0x00];
+        assert_eq!(read_start_position_index(&mut &src[..])?, 5);
 
-        let data = [0xff, 0xff, 0xff, 0xff]; // col_beg = -1
-        let mut reader = &data[..];
+        let src = [0xff, 0xff, 0xff, 0xff];
         assert!(matches!(
-            read_start_position_index(&mut reader),
+            read_start_position_index(&mut &src[..]),
+            Err(ReadError::InvalidStartPositionIndex(_))
+        ));
+
+        let src = [0x00, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            read_start_position_index(&mut &src[..]),
             Err(ReadError::InvalidStartPositionIndex(_))
         ));
 
@@ -255,18 +272,43 @@ mod tests {
 
     #[test]
     fn test_read_end_position_index() -> Result<(), ReadError> {
-        let data = [0x00, 0x00, 0x00, 0x00]; // col_end = 0
-        let mut reader = &data[..];
-        assert!(read_end_position_index(&mut reader)?.is_none());
+        let src = [0x00, 0x00, 0x00, 0x00];
+        assert!(read_end_position_index(&mut &src[..], Format::Sam, 5)?.is_none());
 
-        let data = [0x05, 0x00, 0x00, 0x00]; // col_end = 5
-        let mut reader = &data[..];
-        assert_eq!(read_end_position_index(&mut reader)?, Some(4));
+        let src = [0x00, 0x00, 0x00, 0x00];
+        assert!(read_end_position_index(&mut &src[..], Format::Vcf, 5)?.is_none());
 
-        let data = [0xff, 0xff, 0xff, 0xff]; // col_end = -1
-        let mut reader = &data[..];
+        let src = [0x09, 0x00, 0x00, 0x00];
+        let format = Format::Generic(CoordinateSystem::Gff);
+        assert_eq!(read_end_position_index(&mut &src[..], format, 5)?, Some(8));
+
+        let src = [0x09, 0x00, 0x00, 0x00];
+        let format = Format::Generic(CoordinateSystem::Gff);
+        assert!(read_end_position_index(&mut &src[..], format, 8)?.is_none());
+
+        let src = [0x09, 0x00, 0x00, 0x00];
         assert!(matches!(
-            read_end_position_index(&mut reader),
+            read_end_position_index(&mut &src[..], Format::Sam, 5),
+            Err(ReadError::InvalidEndPositionIndexValue)
+        ));
+
+        let src = [0x09, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            read_end_position_index(&mut &src[..], Format::Vcf, 5),
+            Err(ReadError::InvalidEndPositionIndexValue)
+        ));
+
+        let src = [0xff, 0xff, 0xff, 0xff];
+        let format = Format::Generic(CoordinateSystem::Gff);
+        assert!(matches!(
+            read_end_position_index(&mut &src[..], format, 5),
+            Err(ReadError::InvalidEndPositionIndex(_))
+        ));
+
+        let src = [0x00, 0x00, 0x00, 0x00];
+        let format = Format::Generic(CoordinateSystem::Gff);
+        assert!(matches!(
+            read_end_position_index(&mut &src[..], format, 5),
             Err(ReadError::InvalidEndPositionIndex(_))
         ));
 
