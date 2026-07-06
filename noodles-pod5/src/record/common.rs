@@ -8,7 +8,10 @@ use crate::{
     record::batch::Batch,
 };
 
-/// Defines the conversion contract of `records`, to turn them into owned variants.
+/// The `Record` is the fundamental logical unit for reasoning.
+/// It represents a single row within a table of the [`POD5 file`](crate::file::Pod5).
+///
+/// This trait defines the conversion contract of `Records`, to turn them into owned variants.
 /// This trait is implemented for the [`RunInfoRecord`](crate::record::RunInfoRecord), the
 /// [`ReadRecord`](crate::record::ReadRecord), and the [`SignalRecord`](crate::record::SignalRecord).
 pub trait Record<B: BatchAccess>

@@ -5,20 +5,14 @@
 // local
 use crate::io::reader::{Local, Atomic};
 
-mod internal {
-    pub(crate) mod backend {
-        use crate::io::reader::ConcurrencyMode;
+pub(crate) mod internal {
+    use crate::io::reader::ConcurrencyMode;
 
-        pub trait ReadRecord<M: ConcurrencyMode>{}
+    pub trait ReadRecord<M: ConcurrencyMode>{}
 
-        pub struct ReadRecordCore<M: ConcurrencyMode>{
-            concurrency_mode:M,
-        }
+    pub struct ReadRecordCore<M: ConcurrencyMode>{
+        concurrency_mode:M,
     }
 }
-
-#[cfg(feature = "backend")]
-pub(crate) use internal::backend;
-
-pub type ReadRecord = internal::backend::ReadRecordCore<Local>;
-pub type ConcurrentReadRecord = internal::backend::ReadRecordCore<Atomic>;
+pub type ReadRecord = internal::ReadRecordCore<Local>;
+pub type ConcurrentReadRecord = internal::ReadRecordCore<Atomic>;

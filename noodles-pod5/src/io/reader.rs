@@ -218,6 +218,7 @@ pub use self::internal::{
     ConcurrencyMode,
     Local,
     Atomic,
+    BatchAccess,
 };
 
 #[cfg(not(feature = "backend"))]

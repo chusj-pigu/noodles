@@ -16,6 +16,7 @@ backend = []
 
 [dependencies]
 arc-swap = "1.9.2"
+arrow = "59.0.0"
 
 [dev-dependencies]
 
