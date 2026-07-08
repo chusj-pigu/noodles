@@ -105,12 +105,14 @@ mod internal {
     /// of [`batches`](Batch). It is implemented for the [`LocalBatchHandle`],
     /// the [`AtomicBatchHandle`], and the [`LeasedBatchRef`].
     pub trait BatchAccess: sealed::BatchAccessSeal {
+        /// The [`ConcurrencyMode`] type associated with the `BatchAccess`.
+        type ConcurrencyMode: ConcurrencyMode;
 
         /// The specific [`SharedAccess`] type associated with the `BatchAccess`.
         type SharedAccess<B: Batch>: SharedAccess<B>;
 
         /// The [`BatchHandle`] associated with the `BatchAccess`.
-        type BatchHandle<B: Batch>: BatchHandle<SharedAccess<B>: RefCounted<B>>;
+        type BatchHandle<B: Batch>: BatchHandle<SharedAccess<B>: RefCounted<B>, ConcurrencyMode = Self::ConcurrencyMode>;
 
         /// Converts the [`SharedAccess`] type into the [`RefCounted`] type of
         /// the associated [`BatchHandle`].
@@ -138,6 +140,7 @@ mod internal {
     impl sealed::BatchAccessSeal for LocalBatchHandle {}
 
     impl BatchAccess for LocalBatchHandle {
+        type ConcurrencyMode = Local;
         type SharedAccess<B: Batch> = Rc<B>;
         type BatchHandle<B: Batch> = Self;
         fn upgrade<B: Batch>(shared_access: Rc<B>) -> Rc<B> {
@@ -159,6 +162,7 @@ mod internal {
     impl sealed::BatchAccessSeal for AtomicBatchHandle {}
 
     impl BatchAccess for AtomicBatchHandle {
+        type ConcurrencyMode = Atomic;
         type SharedAccess<B: Batch> = Arc<B>;
         type BatchHandle<B: Batch> = Self;
 
@@ -179,6 +183,7 @@ mod internal {
     impl sealed::BatchAccessSeal for LeasedBatchRef {}
 
     impl BatchAccess for LeasedBatchRef {
+        type ConcurrencyMode = Atomic;
         type SharedAccess<B: Batch> = ArcGuard<B>;
         type BatchHandle<B: Batch> = AtomicBatchHandle;
 
@@ -190,8 +195,8 @@ mod internal {
     impl LocalAccess for LeasedBatchRef {}
 
     pub trait ConcurrencyMode: sealed::ConcurrencySeal {
-        type LocalAccess: LocalAccess;
-        type BatchHandle: BatchHandle;
+        //restriction may be removable, will need to go back to it during implmentation phase
+        type LocalAccess: LocalAccess<ConcurrencyMode = Self>;
     }
 
     pub struct Local;
@@ -200,7 +205,6 @@ mod internal {
 
     impl ConcurrencyMode for Local {
         type LocalAccess = LocalBatchHandle;
-        type BatchHandle = LocalBatchHandle;
     }
 
     pub struct Atomic;
@@ -209,7 +213,6 @@ mod internal {
 
     impl ConcurrencyMode for Atomic {
         type LocalAccess = LeasedBatchRef;
-        type BatchHandle = AtomicBatchHandle;
     }
 }
 
@@ -219,6 +222,9 @@ pub use self::internal::{
     Local,
     Atomic,
     BatchAccess,
+    LocalBatchHandle,
+    AtomicBatchHandle,
+    LeasedBatchRef,
 };
 
 #[cfg(not(feature = "backend"))]
@@ -227,6 +233,9 @@ pub(crate) use self::internal::{
     Local,
     Atomic,
     BatchAccess,
+    LocalBatchHandle,
+    AtomicBatchHandle,
+    LeasedBatchRef,
 };
 
 pub struct ReaderBuilder;
