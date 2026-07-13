@@ -37,7 +37,10 @@ pub(crate) mod internal {
     pub mod backend {
         pub use self::super::super::{
             run_info::internal::*,
-            read::internal::*,
+            read::internal::{
+                ReadRecord,
+                ReadRecordCore,
+            },
             signal::internal::*,
         };
     }

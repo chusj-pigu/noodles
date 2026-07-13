@@ -50,8 +50,8 @@ mod sealed {
 /// The `Batch` is the fundamental unit of work for processing.
 /// It represents a sequential collection of [`Records`](crate::record::common::Record)
 /// grouped together to optimize throughput and memory usage during bulk operations.
-///
-/// This trait is sealed for [`RunInfoBatch`], [`ReadBatch`] and [`SignalBatch`].
+#[cfg_attr(feature = "backend", doc = "\n\nThis trait is sealed for [`RunInfoBatchCore`](backend::RunInfoBatchCore), [`ReadBatchCore`](backend::ReadBatchCore) and [`SignalBatchCore`](backend::SignalBatchCore).")]
+#[cfg_attr(not(feature = "backend"), doc = "\n\nThis trait is sealed for [`RunInfoBatch`]/[`ConcurrentRunInfoBatch`], [`ReadBatch`]/[`ConcurrentReadBatch`] and [`SignalBatch`]/[`ConcurrentSignalBatch`].")]
 pub trait Batch: sealed::Seal {
     /// Returns a new `Batch`.
     fn new(record_batch: RecordBatch, start_row: FileRowIndex, num_rows: RowCount) -> Self;
@@ -68,12 +68,6 @@ impl<M: ConcurrencyMode> sealed::Seal for internal::backend::RunInfoBatchCore<M>
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::ReadBatchCore<M> {}
 
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::SignalBatchCore<M> {}
-
-
-// --- Arrow Collumn NewTypes ---
-
-
-
 
 
 /*
