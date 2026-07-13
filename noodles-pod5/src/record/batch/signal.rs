@@ -5,6 +5,7 @@ use arrow::array::{
     LargeBinaryArray,
     LargeListArray,
 };
+use crate::file::{FileRowIndex, RowIndexOutOfBounds};
 // local
 use crate::io::reader::{Local, Atomic};
 
@@ -12,7 +13,7 @@ pub(crate) mod internal {
     // standard
 
     // third party
-    use arrow::array::*;
+
     // local
     use crate::{
         io::reader::ConcurrencyMode,
@@ -21,19 +22,18 @@ pub(crate) mod internal {
             RowIndexOutOfBounds,
         },
         record::{
-            iter::internal::backend::SignalBuffer,
             internal::backend::SignalRecord,
-            batch::Batch,
+            batch::{
+                Batch,
+                arrays::*,
+            },
         }
     };
 
     /// Defines the operations of a `SignalBatch`.
     pub trait SignalBatch<M: ConcurrencyMode>: Batch {
         /// The [`SignalRecord`] implementation returned by [`single_row()`](Self::single_row).
-        type SignalRecord: SignalRecord<M>;
-
-        /// The [`SignalBuffer`] implementation returned by [`records()`](Self::records).
-        type SignalBuffer: SignalBuffer<M>;
+        type SignalRecord: SignalRecord<M::LocalAccess>;
 
         /// Returns a single [`SignalRecord`](Self::SignalRecord) by
         /// its [`FileRowIndex`].
@@ -44,30 +44,22 @@ pub(crate) mod internal {
         /// current batch's boundaries.
         fn single_row(&self, global_row: FileRowIndex) -> Result<Self::SignalRecord, RowIndexOutOfBounds>;
 
-        /// Returns a variant of a [`SignalBuffer`](Self::SignalBuffer) of the records in this batch.
-        fn records(&self) -> Self::SignalBuffer;
+        // --- Core Column ---
+        /// Returns the stored down-casted `read_id` column.
+        fn read_id_column(&self) -> &UuidArray;
 
-        // --- Core Column Accessors ---
+        // --- Core Column ---
+        /// Returns the stored down-casted `read_id` column.
+        fn signal_column(&self) -> &LargeDataSet;
 
-        /// Returns the `read_id` column.
-        fn read_id_column(&self) -> &FixedSizeBinaryArray;
-
-        /// Returns the `read_id` column.
-        fn signal_column(&self) -> &super::LargeDataSet;
-
-        /// Returns the `read_id` column.
+        // --- Core Column (Recoverable) ---
+        /// Returns the stored down-casted `read_id` column.
         fn sample_column(&self) -> &UInt32Array;
     }
 
     pub struct SignalBatchCore<M: ConcurrencyMode>{
         concurrency_mode:M,
     }
-}
-
-/// Abstracts over the actual form of the signal data, be it compressed or not.
-pub enum LargeDataSet{
-    Raw(LargeListArray),
-    VBZ(LargeBinaryArray),
 }
 
 #[cfg_attr(feature = "backend", doc = "The single-threaded variant of the [`SignalBatch`](internal::SignalBatchCore) generic.")]

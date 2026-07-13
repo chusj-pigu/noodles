@@ -9,10 +9,7 @@ pub(crate) mod internal {
     // standard
 
     // third party
-    use arrow::{
-        array::*,
-        datatypes::Int32Type,
-    };
+    
     // local
     use crate::{
         io::reader::ConcurrencyMode,
@@ -23,49 +20,17 @@ pub(crate) mod internal {
         record::{
             iter::internal::backend::RunInfoIter,
             internal::backend::RunInfoRecord,
-            batch::Batch,
+            batch::{
+                Batch,
+                arrays::*,
+            },
         }
     };
-
-    /*
-    could potentially do subdivision like this;
-    // --- Acquisition Metadata ---
-    acquisition_id
-    acquisition_start_time
-    experiment_name
-    sample_rate
-
-    // --- Hardware Metadata ---
-    adc_max
-    adc_min
-    flow_cell_id
-    flow_cell_product_code
-    sequencer_position
-    sequencer_position_type
-
-    // --- Protocol Metadata ---
-    protocol_name
-    protocol_run_id
-    protocol_start_time
-    sequencing_kit
-    sample_id
-
-    // --- Software & System Metadata ---
-    software
-    system_name
-    system_type
-
-    // --- Compatibility Metadata ---
-    context_tags
-    tracking_id
     
-    issue is this would reorganize the columns in a different order than their 
-    internal order of appearence, which I feel would wind up more confusing than anything
-    */
     /// Defines the operations of a `SignalBatch`.
     pub trait RunInfoBatch<M: ConcurrencyMode>: Batch{
         /// The [`RunInfoRecord`] implementation returned by [`single_row()`](Self::single_row).
-        type RunInfoRecord: RunInfoRecord<M>;
+        type RunInfoRecord: RunInfoRecord<M::LocalAccess>;
 
         /// The [`RunInfoIter`] implementation returned by [`records()`](Self::records).
         type RunInfoIter: RunInfoIter<M>;
@@ -82,67 +47,77 @@ pub(crate) mod internal {
         /// Returns a variant of a [`RunInfoIter`](Self::RunInfoIter) of the records in this batch.
         fn records(&self) -> Self::RunInfoIter;
 
-        // --- Core Column Accessors ---
+        // --- Core Column ---
+        /// Returns the stored down-casted acquisition identifier column.
+        fn acquisition_id_column(&self) -> &StringArray;
 
-        /// Returns the acquisition identifier column.
-        fn acquisition_id_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted acquisition start time column.
+        fn acquisition_start_time_column(&self) -> &EpochMillisArray;
 
-        /// Returns the acquisition start time column.
-        fn acquisition_start_time_column(&self) -> &TimestampMillisecondArray;
-
-        /// Returns the maximum ADC value column.
+        // --- Core Column (Recoverable) ---
+        /// Returns the stored down-casted maximum ADC value column.
         fn adc_max_column(&self) -> &Int16Array;
 
-        /// Returns the minimum ADC value column.
+        // --- Core Column (Recoverable) ---
+        /// Returns the stored down-casted minimum ADC value column.
         fn adc_min_column(&self) -> &Int16Array;
 
-        /// Returns the run context tags column.
-        fn context_tags_column(&self) -> &MapArray;
+        /// Returns the stored down-casted run context tags column.
+        fn context_tags_column(&self) -> &SliceMapArray;
 
-        /// Returns the experiment name column.
-        fn experiment_name_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted experiment name column.
+        fn experiment_name_column(&self) -> &StringDictionary;
 
-        /// Returns the flow cell identifier column.
-        fn flow_cell_id_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted flow cell identifier column.
+        fn flow_cell_id_column(&self) -> &StringDictionary;
 
-        /// Returns the flow cell product code column.
-        fn flow_cell_product_code_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted flow cell product code column.
+        fn flow_cell_product_code_column(&self) -> &StringDictionary;
 
-        /// Returns the protocol name column.
-        fn protocol_name_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted protocol name column.
+        fn protocol_name_column(&self) -> &StringDictionary;
 
-        /// Returns the protocol run identifier column.
-        fn protocol_run_id_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted protocol run identifier column.
+        fn protocol_run_id_column(&self) -> &StringDictionary;
 
-        /// Returns the protocol start time column.
-        fn protocol_start_time_column(&self) -> &TimestampMillisecondArray;
+        // --- Core Column ---
+        /// Returns the stored down-casted protocol start time column.
+        fn protocol_start_time_column(&self) -> &EpochMillisArray;
 
-        /// Returns the sample identifier column.
-        fn sample_id_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted sample identifier column.
+        fn sample_id_column(&self) -> &StringDictionary;
 
-        /// Returns the acquisition sample rate column.
+        // --- Core Column ---
+        /// Returns the stored down-casted acquisition sample rate column.
         fn sample_rate_column(&self) -> &UInt16Array;
 
-        /// Returns the sequencing kit column.
-        fn sequencing_kit_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted sequencing kit column.
+        fn sequencing_kit_column(&self) -> &StringDictionary;
 
-        /// Returns the sequencer position column.
-        fn sequencer_position_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted sequencer position column.
+        fn sequencer_position_column(&self) -> &StringDictionary;
 
-        /// Returns the sequencer position type column.
-        fn sequencer_position_type_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted sequencer position type column.
+        fn sequencer_position_type_column(&self) -> &StringDictionary;
 
-        /// Returns the acquisition software description column.
-        fn software_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted acquisition software description column.
+        fn software_column(&self) -> &StringDictionary;
 
-        /// Returns the system name column.
-        fn system_name_column(&self) -> &DictionaryArray<Int32Type>;
+        /// Returns the stored down-casted system name column.
+        fn system_name_column(&self) -> &StringDictionary;
 
-        /// Returns the system type column.
-        fn system_type_column(&self) -> &DictionaryArray<Int32Type>;
+        // --- Core Column ---
+        /// Returns the stored down-casted system type column.
+        fn system_type_column(&self) -> &StringDictionary;
 
-        /// Returns the run tracking information column.
-        fn tracking_id_column(&self) -> &MapArray;
+        /// Returns the stored down-casted run tracking information column.
+        fn tracking_id_column(&self) -> &SliceMapArray;
     }
 
     pub struct RunInfoBatchCore<M: ConcurrencyMode>{

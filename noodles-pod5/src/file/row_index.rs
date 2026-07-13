@@ -1,12 +1,16 @@
 // standard
 use std::{
-    fmt,
+    fmt::{
+        Display,
+        Formatter,
+        Result,
+    },
     error::Error,
 };
-use std::fmt::{Display, Formatter};
 // third party
 
 // local
+
 
 pub struct FileRowIndex;
 
@@ -41,12 +45,12 @@ impl From<BatchRowIndex> for usize {
 
 pub struct RowCount;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// An error where the user passes in a row index which is too big.
 pub struct RowIndexOutOfBounds;
 
 impl Display for RowIndexOutOfBounds {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "Row index is out of bounds")
     }
 }
