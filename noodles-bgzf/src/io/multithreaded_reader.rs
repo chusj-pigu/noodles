@@ -16,6 +16,8 @@ type ReadRx = Receiver<BufferedRx>;
 type RecycleTx = Sender<Buffer>;
 type RecycleRx = Receiver<Buffer>;
 
+const NON_WORKER_COUNT: usize = 2;
+
 enum State<R> {
     Paused(R),
     Running {
@@ -173,11 +175,12 @@ where
         };
 
         let worker_count = rayon::current_num_threads();
+        let buffer_count = worker_count + NON_WORKER_COUNT;
 
-        let (read_tx, read_rx) = crossbeam_channel::bounded(worker_count);
-        let (recycle_tx, recycle_rx) = crossbeam_channel::bounded(worker_count);
+        let (read_tx, read_rx) = crossbeam_channel::bounded(buffer_count);
+        let (recycle_tx, recycle_rx) = crossbeam_channel::bounded(buffer_count);
 
-        for _ in 0..worker_count {
+        for _ in 0..buffer_count {
             recycle_tx.send(Buffer::default()).unwrap();
         }
 
@@ -398,15 +401,7 @@ mod tests {
             0x02, 0x00, 0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        const EOF_VIRTUAL_POSITION: VirtualPosition = match VirtualPosition::new(63, 0) {
-            Some(pos) => pos,
-            None => unreachable!(),
-        };
-
-        const VIRTUAL_POSITION: VirtualPosition = match VirtualPosition::new(0, 3) {
-            Some(pos) => pos,
-            None => unreachable!(),
-        };
+        const EOF_VIRTUAL_POSITION: VirtualPosition = VirtualPosition::new(63, 0).unwrap();
 
         let mut reader = MultithreadedReader::new(Cursor::new(DATA));
 
@@ -415,7 +410,7 @@ mod tests {
 
         assert_eq!(reader.virtual_position(), EOF_VIRTUAL_POSITION);
 
-        reader.seek_to_virtual_position(VIRTUAL_POSITION)?;
+        reader.seek_to_virtual_position(const { VirtualPosition::new(0, 3).unwrap() })?;
 
         buf.clear();
         reader.read_to_end(&mut buf)?;
