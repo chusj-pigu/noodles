@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.57.0 - 2026-07-10
 
 ### Changed
 
@@ -20,6 +20,11 @@
     If the end position index is missing, a specialized value is written for
     SAM and VCF; otherwise, the end position index is set to the start position
     index.
+
+### Fixed
+
+  * csi/io/indexed_records/record/position: Check for overflow in 0 to 1-based
+    coordinate conversion.
 
 ## 0.56.0 - 2026-05-06
 

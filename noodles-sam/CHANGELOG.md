@@ -4,6 +4,14 @@
 
 ### Changed
 
+  * sam/io/reader/record_buf: Increase the visibility of `ParseError` ([#403]).
+
+[#403]: https://github.com/zaeleus/noodles/issues/403
+
+## 0.86.0 - 2026-07-10
+
+### Changed
+
   * sam/alignment/record/data: Add lifetime to `Data` ([#400]).
 
     This allows field values to be associated with the lifetime of the record.
