@@ -11,6 +11,7 @@ use arrow::array::RecordBatch;
 mod run_info;
 mod read;
 mod signal;
+mod batch_index;
 pub mod arrays;
 pub mod types;
 
@@ -27,6 +28,7 @@ pub use self::{
         ConcurrentSignalBatch,
         SignalBatch,
     },
+    batch_index::*,
 };
 
 
@@ -60,7 +62,7 @@ pub trait Batch: sealed::Seal {
     fn as_record_batch(&self) -> &RecordBatch;
 
     /// Returns `true` if the [`RowIndex`](FileRowIndex) is within this `Batch`.
-    fn contains(&self, global_row: FileRowIndex) -> bool;
+    fn contains(&self, global_row: FileRowIndex) -> Option<bool>;
 }
 
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::RunInfoBatchCore<M> {}
