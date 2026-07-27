@@ -46,22 +46,54 @@ pub struct Parser {
 
 impl Parser {
     /// Creates a VCF header parser builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noodles_vcf::header::Parser;
+    /// let builder = Parser::builder();
+    /// ```
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// Parses a raw VCF header.
-    pub fn parse(&self, s: &str) -> Result<Header, ParseError> {
-        let mut parser = Self::default();
-
+    /// Parses an entire raw VCF header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noodles_vcf::header::Parser;
+    /// let src = "##fileformat=VCFv4.5\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\n";
+    /// let parser = Parser::default();
+    /// let header = parser.parse(src)?;
+    /// # Ok::<_, noodles_vcf::header::parser::ParseError>(())
+    /// ```
+    pub fn parse(mut self, s: &str) -> Result<Header, ParseError> {
         for line in s.lines() {
-            parser.parse_partial(line.as_bytes())?;
+            self.parse_partial(line.as_bytes())?;
         }
 
-        parser.finish()
+        self.finish()
     }
 
     /// Parses and adds a raw record to the header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noodles_vcf::header::Parser;
+    ///
+    /// let src = "##fileformat=VCFv4.5\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\n";
+    ///
+    /// let mut parser = Parser::default();
+    ///
+    /// for line in src.lines() {
+    ///     parser.parse_partial(line.as_bytes())?;
+    /// }
+    ///
+    /// let header = parser.finish();
+    /// # Ok::<_, noodles_vcf::header::parser::ParseError>(())
+    /// ```
     pub fn parse_partial(&mut self, src: &[u8]) -> Result<Entry<'_>, ParseError> {
         if self.state == State::Done {
             return Err(ParseError::ExpectedEof);
@@ -105,6 +137,23 @@ impl Parser {
     }
 
     /// Builds the VCF header.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use noodles_vcf::header::Parser;
+    ///
+    /// let src = "##fileformat=VCFv4.5\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\n";
+    ///
+    /// let mut parser = Parser::default();
+    ///
+    /// for line in src.lines() {
+    ///     parser.parse_partial(line.as_bytes())?;
+    /// }
+    ///
+    /// let header = parser.finish();
+    /// # Ok::<_, noodles_vcf::header::parser::ParseError>(())
+    /// ```
     pub fn finish(self) -> Result<Header, ParseError> {
         match self.state {
             State::Empty => Err(ParseError::Empty),

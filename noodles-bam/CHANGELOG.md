@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.92.0 - 2026-07-24
+
+### Changed
+
+  * bam/record/sequence: Use base count for `Sequence::is_empty`.
+
+    This previously used the size of the buffer, but accessing the bases is
+    dependent on the base count.
+
 ## 0.91.0 - 2026-07-10
 
 ### Changed

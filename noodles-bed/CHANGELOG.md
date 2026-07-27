@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.0 - 2026-07-24
+
+### Fixed
+
+  * bed/io/reader/record: Only strip carriage return from CRLF newline.
+
 ## 0.35.0 - 2026-07-10
 
 ### Changed
