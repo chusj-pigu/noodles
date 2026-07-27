@@ -17,6 +17,14 @@ backend = []
 [dependencies]
 arc-swap = "1.9.2"
 arrow = "59.0.0"
+flatbuffers = "25.12.19"
+memmap2 = "0.9.11"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = "0.61.2"
 
 [dev-dependencies]
 
