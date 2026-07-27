@@ -243,7 +243,7 @@ impl Mmap {
     ///
     /// Returns [`ErrorKind::Unsupported`](std::io::ErrorKind::Unsupported)
     /// on unsupported platforms.
-    pub(crate) unsafe fn new(file: File, page_size: PageSize) -> Result<Self, Error> {
+    pub(crate) unsafe fn new(file: File, page_size: PageSize) -> Result<Arc<Self>, Error> {
         // Safety:
         // Safety of the operation is upheld by the user.
         let mmap = unsafe {
@@ -251,12 +251,12 @@ impl Mmap {
         };
         let worker_handle = WorkerHandle::new(&mmap, page_size);
         let max_offset = mmap.len().saturating_sub(1);
-        Ok(Self{
+        Ok(Arc::new(Self{
             worker_handle,
             mmap,
             page_size,
             max_offset,
-        })
+        }))
     }
 
     /// Advises the operating system that this byte range will likely be
