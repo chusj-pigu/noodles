@@ -270,11 +270,17 @@ impl<B: Batch> BatchUsageTracker<Atomic, B> for ArcBatchUsageTracker<B> {
                     return None
                 }
             }
+            let mut spins = 0;
             while {
                 let val = self.capacity.load(Ordering::Relaxed);
                 Capacity::new(val).unwrap().is_locked()
             } {
-                core::hint::spin_loop();
+                if spins < 50 {
+                    core::hint::spin_loop();
+                    spins += 1;
+                } else {
+                    std::thread::yield_now();
+                }
             }
         };
         let guard = ArcGuard::new(self.pointer.load());
