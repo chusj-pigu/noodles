@@ -4,10 +4,8 @@ use std::{
     error::Error
 };
 // third party
-use arrow::array::{
-    FixedSizeBinaryArray,
-    Array,
-};
+use arrow::array::{FixedSizeBinaryArray, Array, ArrayRef, ListArray, UInt64Array};
+use arrow::datatypes::DataType;
 // local
 use crate::{
     file::{
@@ -16,6 +14,7 @@ use crate::{
     },
     record::batch::types::Uuid,
 };
+use crate::record::batch::arrays::DownCastFailure;
 
 /// A non-null UUID value did not contain exactly 16 bytes.
 ///
@@ -63,25 +62,33 @@ impl Error for UuidArrayError {}
 pub struct UuidArray(FixedSizeBinaryArray);
 
 impl UuidArray {
-    /// Creates a new [`UuidArray`] from an Arrow array.
+    /// Attempts to create a new [`UuidArray`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
     #[must_use]
-    pub fn new(array: FixedSizeBinaryArray) -> Self {
-        UuidArray(array)
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        let expected = DataType::FixedSizeBinary(16);
+        if array_ref.data_type() != &expected {
+            return Err(DownCastFailure{
+                actual: array_ref.data_type().clone(),
+                expected
+            });
+        }
+        Ok(Self::from_raw_parts(array_ref.to_data().into()))
     }
 
-    /// Returns the underlying Arrow array.
+    /// Creates a new wrapper arround an Arrow [`FixedSizeBinaryArray`].
     #[inline]
     #[must_use]
-    pub fn as_fixed_size_binary_array(&self) -> &FixedSizeBinaryArray {
-        &self.0
+    pub fn from_raw_parts(array: FixedSizeBinaryArray) -> Self {
+        Self(array)
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Consumes the wrapper and returns the underlying Arrow [`FixedSizeBinaryArray`].
     #[inline]
     #[must_use]
-    pub fn to_fixed_size_binary_array(self) -> FixedSizeBinaryArray {
-        self.0
+    pub fn to_raw_parts(self) -> (FixedSizeBinaryArray) {
+        (self.0)
     }
 
     /// Returns the UUID stored at the given batch row.
@@ -93,6 +100,7 @@ impl UuidArray {
     /// Returns an error if the row index is out of bounds or if a non-null
     /// value does not contain exactly 16 bytes.
     #[inline]
+    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<Uuid>, UuidArrayError> {
         let array = &self.0;
         let index: usize = index.into();

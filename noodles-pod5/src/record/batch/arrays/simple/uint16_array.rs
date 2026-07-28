@@ -1,15 +1,14 @@
 // standard
 
 // third party
-use arrow::array::{
-    self, 
-    Array,
-};
+use arrow::array::{self, Array, ArrayRef};
+use arrow::datatypes::DataType;
 // local
 use crate::file::{
-    BatchRowIndex, 
+    BatchRowIndex,
     RowIndexOutOfBounds,
 };
+use crate::record::batch::arrays::{DownCastFailure};
 
 /// Thin wrapper around Arrow's [`UInt16Array`].
 ///
@@ -19,25 +18,34 @@ use crate::file::{
 pub struct UInt16Array(array::UInt16Array);
 
 impl UInt16Array {
-    /// Creates a new wrapper around an Arrow array.
+
+    /// Attempts to create a new [`UInt16Array`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
     #[must_use]
-    pub fn new(array: array::UInt16Array) -> Self {
-        UInt16Array(array)
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        let expected = DataType::UInt16;
+        if array_ref.data_type() != &expected {
+            return Err(DownCastFailure{
+                actual: array_ref.data_type().clone(),
+                expected
+            });
+        }
+        Ok(Self::from_raw_parts(array_ref.to_data().into()))
     }
 
-    /// Returns the underlying Arrow array.
+    /// Creates a new wrapper arround an Arrow [`UInt16Array`](array::UInt16Array).
     #[inline]
     #[must_use]
-    pub fn as_uint16_array(&self) -> &array::UInt16Array {
-        &self.0
+    pub fn from_raw_parts(array: array::UInt16Array) -> Self {
+        Self(array)
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Consumes the wrapper and returns the underlying Arrow [`UInt16Array`](array::UInt16Array).
     #[inline]
     #[must_use]
-    pub fn to_uint16_array(self) -> array::UInt16Array {
-        self.0
+    pub fn to_raw_parts(self) -> (array::UInt16Array) {
+        (self.0)
     }
 
     /// Returns the value stored at the given batch row.
@@ -49,7 +57,7 @@ impl UInt16Array {
     /// Returns an error if the row index is out of bounds.
     #[inline]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<u16>, RowIndexOutOfBounds> {
-        let array = self.as_uint16_array();
+        let array = &self.0;
         let index: usize = index.into();
 
         if index >= array.len() {

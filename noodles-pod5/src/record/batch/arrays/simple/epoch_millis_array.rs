@@ -1,10 +1,13 @@
 // standard
 
 // third party
+use crate::record::batch::arrays::DownCastFailure;
 use arrow::array::{
     TimestampMillisecondArray, 
     Array,
+    ArrayRef,
 };
+use arrow::datatypes::{DataType, TimeUnit};
 // local
 use crate::file::{
     BatchRowIndex, 
@@ -19,24 +22,31 @@ use crate::file::{
 pub struct EpochMillisArray(TimestampMillisecondArray);
 
 impl EpochMillisArray {
-    /// Creates a new wrapper around an Arrow array.
+    /// Attempts to create a new [`EpochMillisArray`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
     #[must_use]
-    pub fn new(array: TimestampMillisecondArray) -> Self {
-        EpochMillisArray(array)
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        if let DataType::Timestamp(TimeUnit::Millisecond, _) = array_ref.data_type() {
+            return Ok(Self::from_raw_parts(array_ref.to_data().into()))
+        }
+        Err(DownCastFailure{
+            actual: array_ref.data_type().clone(),
+            expected: DataType::Timestamp(TimeUnit::Millisecond, None)
+        })
     }
 
-    /// Returns the underlying Arrow array.
+    /// Creates a new wrapper arround an Arrow [`TimestampMillisecondArray`].
     #[inline]
     #[must_use]
-    pub fn as_epoch_millis_array(&self) -> &TimestampMillisecondArray {
-        &self.0
+    pub fn from_raw_parts(array: TimestampMillisecondArray) -> Self {
+        Self(array)
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Consumes the wrapper and returns the underlying Arrow [`TimestampMillisecondArray`].
     #[inline]
     #[must_use]
-    pub fn to_epoch_millis_array(self) -> TimestampMillisecondArray {
+    pub fn to_raw_parts(self) -> TimestampMillisecondArray {
         self.0
     }
 
@@ -49,7 +59,7 @@ impl EpochMillisArray {
     /// Returns an error if the row index is out of bounds.
     #[inline]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<i64>, RowIndexOutOfBounds> {
-        let array = self.as_epoch_millis_array();
+        let array = &self.0;
         let index: usize = index.into();
 
         if index >= array.len() {

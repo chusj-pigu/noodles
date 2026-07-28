@@ -4,15 +4,17 @@ use std::sync::Arc;
 use arrow::{
     array::{
         Array,
-        UInt64Array
+        ArrayRef,
+        ListArray,
+        PrimitiveArray,
+        UInt64Array,
     },
     datatypes::{
         DataType,
         Field,
     },
-    array::{ListArray}
 };
-use arrow::array::PrimitiveArray;
+use arrow::datatypes::FieldRef;
 // local
 use crate::{
     file::{
@@ -26,57 +28,62 @@ use crate::{
 ///
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
-pub struct IndexListArray(ListArray, UInt64Array);
+pub struct IndexListArray {
+    /// The wrapped array.
+    wrapped_array: ListArray,
+    /// The downcasted data array.
+    data_array: UInt64Array,
+}
 
 impl IndexListArray {
-    fn is_valid_list(dt: &DataType) -> bool {
-        if let DataType::List(n) = dt {
-            return *n.data_type() == DataType::UInt64;
+    /// Verifies if the [`data_type`](DataType) corresponds to a `IndexListArray`,
+    /// returning [`DownCastFailure`] otherwise.
+    #[must_use]
+    fn is_valid_index_list_array(data_type: &DataType) -> Result<(), DownCastFailure> {
+        if let DataType::List(field_ref) = data_type {
+            if *field_ref.data_type() == DataType::UInt64 {
+                return Ok(());
+            }
         }
-        false
+
+        let expected = DataType::List(FieldRef::new(Field::new(
+            "item",
+            DataType::UInt64,
+            false,
+        )));
+
+        Err(DownCastFailure {
+            expected,
+            actual: data_type.clone(),
+        })
     }
 
-    /// Creates a new wrapper around an Arrow array.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the array.
+    /// Attempts to create a new [`IndexListArray`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    pub fn new(array: ListArray) -> Result<Self, DownCastFailure> {
-        if Self::is_valid_list(array.data_type()) {
-            let ex = DataType::List(
-                Arc::new(Field::new(
-                    "item",
-                    DataType::UInt64,
-                    false,
-                ))
-            );
-            let er = DownCastFailure { expected: ex, actual: array.data_type().clone() };
-            return Err(er);
-        }
-
+    #[must_use]
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        Self::is_valid_index_list_array(array_ref.data_type())?;
+        let array: ListArray = array_ref.to_data().into();
         let data = array.values().to_data().clone();
-
-        // The from() calls will not panic if the data has been validated in advance.
-        // The decoding process guarantees structural correctness for instantiation
-        // but not for satisfaction of data semantic invariants.
-        let indexes = UInt64Array::from(PrimitiveArray::from(data));
-
-        Ok(IndexListArray(array, indexes))
+        Ok(Self::from_raw_parts(array, PrimitiveArray::from(data).into()))
     }
 
-    /// Returns the underlying Arrow array.
+    /// Creates a new wrapper around an Arrow [`ListArray`] and [`UInt64Array`].
     #[inline]
     #[must_use]
-    pub fn as_slice_map_array(&self) -> &ListArray {
-        &self.0
+    pub fn from_raw_parts(wrapped_array: ListArray, data_array: UInt64Array) -> Self {
+        Self {
+            wrapped_array,
+            data_array,
+        }
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Consumes the wrapper and returns the underlying Arrow [`ListArray`] and [`UInt64Array`].
     #[inline]
     #[must_use]
-    pub fn to_slice_map_array(self) -> ListArray {
-        self.0
+    pub fn to_raw_parts(self) -> (ListArray, UInt64Array) {
+        (self.wrapped_array, self.data_array)
     }
 
     /// Returns the value stored at the given batch row.
@@ -87,8 +94,9 @@ impl IndexListArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
+    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<&[u64]>, RowIndexOutOfBounds> {
-        let array = self.as_slice_map_array();
+        let array = &self.wrapped_array;
         let index: usize = index.into();
 
         if index >= array.len() {
@@ -103,8 +111,6 @@ impl IndexListArray {
         let start = offsets[index] as usize;
         let len = array.value_length(index) as usize;
 
-        let end = start + len;
-
-        Ok(Some(&self.1.values()[start..end]))
+        Ok(Some(&self.data_array.values()[start..start + len]))
     }
 }

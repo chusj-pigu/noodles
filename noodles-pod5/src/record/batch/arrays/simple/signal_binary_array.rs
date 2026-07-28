@@ -1,15 +1,15 @@
 // standard
 
+use arrow::array;
 // third party
-use arrow::array::{
-    LargeBinaryArray,
-    Array,
-};
+use arrow::array::{LargeBinaryArray, Array, ArrayRef};
+use arrow::datatypes::DataType;
 // local
 use crate::file::{
     BatchRowIndex,
     RowIndexOutOfBounds,
 };
+use crate::record::batch::arrays::{BooleanArray, DownCastFailure};
 
 /// Thin wrapper around Arrow's [`LargeSizeBinaryArray`].
 ///
@@ -19,25 +19,33 @@ use crate::file::{
 pub struct SignalBinaryArray(LargeBinaryArray);
 
 impl SignalBinaryArray {
-    /// Creates a new [`SignalBinaryArray`] from an Arrow array.
+    /// Attempts to create a new [`BooleanArray`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
     #[must_use]
-    pub fn new(array: LargeBinaryArray) -> Self {
-        SignalBinaryArray(array)
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        let expected = DataType::LargeBinary;
+        if array_ref.data_type() != &expected {
+            return Err(DownCastFailure{
+                actual: array_ref.data_type().clone(),
+                expected
+            });
+        }
+        Ok(Self::from_raw_parts(array_ref.to_data().into()))
     }
 
-    /// Returns the underlying Arrow array.
+    /// Creates a new wrapper arround an Arrow [`LargeBinaryArray`].
     #[inline]
     #[must_use]
-    pub fn as_large_binary_array(&self) -> &LargeBinaryArray {
-        &self.0
+    pub fn from_raw_parts(array: LargeBinaryArray) -> Self {
+        Self(array)
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Consumes the wrapper and returns the underlying Arrow [`LargeBinaryArray`].
     #[inline]
     #[must_use]
-    pub fn to_large_binary_array(self) -> LargeBinaryArray {
-        self.0
+    pub fn to_raw_parts(self) -> (LargeBinaryArray) {
+        (self.0)
     }
 
     /// Returns the UUID stored at the given batch row.

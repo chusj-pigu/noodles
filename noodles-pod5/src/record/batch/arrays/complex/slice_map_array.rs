@@ -1,6 +1,8 @@
 // standard
 
+use std::iter::Map;
 // third party
+use std::sync::Arc;
 use arrow::{
     array::{
         MapArray,
@@ -14,6 +16,7 @@ use arrow::{
         FieldRef,
     },
 };
+use arrow::array::ArrayRef;
 // local
 use crate::{
     file::{
@@ -25,68 +28,87 @@ use crate::{
         types::FlatMap,
     },
 };
+use crate::record::batch::arrays::UuidArray;
 
 /// Thin wrapper around Arrow's [`MapArray`].
 ///
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
-pub struct SliceMapArray(MapArray, StringArray, StringArray);
+pub struct SliceMapArray {
+    /// The wrapped array.
+    wrapped_array: MapArray,
+    /// The downcasted keys array.
+    keys_array: StringArray,
+    /// The downcasted values array.
+    values_array: StringArray
+}
 
 impl SliceMapArray {
-    fn is_valid_map(dt: &DataType) -> bool {
-        if let DataType::Map(entries_field, _) = dt {
-            if let DataType::Struct(fields) = entries_field.data_type() {
-                return fields.len() == 2
-                    && *fields[0].data_type() == DataType::Utf8
-                    && *fields[1].data_type() == DataType::Utf8;
+    /// Verifies if the [`data_type`](DataType) corresponds to a `SliceMapArray`,
+    /// returning [`DownCastFailure`] otherwise.
+    #[must_use]
+    fn is_valid_slice_map_array(data_type: &DataType) -> Result<(), DownCastFailure> {
+        if let DataType::List(field_ref) = data_type {
+            if field_ref.data_type() == &DataType::UInt64 {
+                return Ok(());
             }
         }
-        false
-    }
-
-    /// Creates a new wrapper around an Arrow array.
-    #[inline]
-    pub fn new(array: MapArray) -> Result<Self, DownCastFailure> {
-        if Self::is_valid_map(array.data_type()) {
-            let ex = DataType::Map(
-                FieldRef::new(Field::new(
-                    "entries",
-                    DataType::Struct(Fields::from(vec![
-                        Field::new("key", DataType::Utf8, false),
-                        Field::new("value", DataType::UInt8, true),
-                    ])),
-                    false,
-                )),
-                false, 
-            );
-            let er = DownCastFailure { expected: ex, actual: array.data_type().clone() };
-            return Err(er);
+        if let DataType::Map(field_ref, _) = data_type {
+            if let DataType::Struct(fields) = field_ref.data_type() {
+                if fields.len() == 2
+                    && *fields[0].data_type() == DataType::Utf8
+                    && *fields[1].data_type() == DataType::Utf8 {
+                    return Ok(());
+                }
+            }
         }
 
-        let keys_data = array.keys().to_data().clone();
-        let values_data = array.values().to_data().clone();
+        let expected = DataType::Map(
+            FieldRef::new(Field::new(
+                "entries",
+                DataType::Struct(Fields::from(vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Utf8, true),
+                ])),
+                false,
+            )),
+            false,
+        );
 
-        // The from() calls will not panic if the data has been validated in advance.
-        // The decoding process guarantees structural correctness for instantiation
-        // but not for satisfaction of data semantic invariants.
-        let keys = StringArray::from(keys_data);
-        let values = StringArray::from(values_data);
-
-        Ok(SliceMapArray(array, keys, values))
+        Err(DownCastFailure {
+            expected,
+            actual: data_type.clone(),
+        })
     }
 
-    /// Returns the underlying Arrow array.
+    /// Attempts to create a new [`SliceMapArray`] from an Arrow [`ArrayRef`],
+    /// returning [`DownCastFailure`] otherwise.
     #[inline]
     #[must_use]
-    pub fn as_slice_map_array(&self) -> &MapArray {
-        &self.0
+    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
+        Self::is_valid_slice_map_array(array_ref.data_type())?;
+        let array: MapArray = array_ref.to_data().into();
+        let keys = array.keys().to_data().clone();
+        let values = array.values().to_data().clone();
+        Ok(Self::from_raw_parts(array, keys.into(), values.into()))
     }
 
-    /// Consumes the wrapper and returns the underlying Arrow array.
+    /// Creates a new wrapper around an Arrow [`MapArray`], [`StringArray`] and [`StringArray`].
     #[inline]
     #[must_use]
-    pub fn to_slice_map_array(self) -> MapArray {
-        self.0
+    pub fn from_raw_parts(wrapped_array: MapArray, keys_array: StringArray, values_array: StringArray) -> Self {
+        Self {
+            wrapped_array,
+            keys_array,
+            values_array,
+        }
+    }
+
+    /// Consumes the wrapper and returns the underlying Arrow [`MapArray`], [`StringArray`] and [`StringArray`].
+    #[inline]
+    #[must_use]
+    pub fn to_raw_parts(self) -> (MapArray, StringArray, StringArray) {
+        (self.wrapped_array, self.keys_array, self.values_array)
     }
 
     /// Returns the value stored at the given batch row.
@@ -97,8 +119,9 @@ impl SliceMapArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
+    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<FlatMap>, RowIndexOutOfBounds> {
-        let array = self.as_slice_map_array();
+        let array = &self.wrapped_array;
         let index: usize = index.into();
 
         if index >= array.len() {
@@ -114,7 +137,7 @@ impl SliceMapArray {
         let len = array.value_length(index) as usize;
 
         let data = (start..start+len)
-            .map(|i| (self.1.value(i), self.2.value(i))).collect();
+            .map(|i| (self.keys_array.value(i), self.values_array.value(i))).collect();
         Ok(Some(FlatMap::new(data)))
     }
 }

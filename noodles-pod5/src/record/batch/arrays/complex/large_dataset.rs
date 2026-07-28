@@ -34,7 +34,7 @@ impl LargeDataSet {
     /// # Errors
     ///
     /// Returns an error if the row index is out of bounds.
-    pub fn index(&'_ self, index: BatchRowIndex) -> Result<Option<LargeData<'_>>, RowIndexOutOfBounds> {
+    pub fn index<'a>(&'a self, index: BatchRowIndex) -> Result<Option<LargeData<'a>>, RowIndexOutOfBounds> {
         match self {
             LargeDataSet::Raw(array)
             => {
