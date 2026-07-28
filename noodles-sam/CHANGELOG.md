@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.87.0 - 2026-07-24
 
 ### Changed
 
   * sam/io/reader/record_buf: Increase the visibility of `ParseError` ([#403]).
 
 [#403]: https://github.com/zaeleus/noodles/issues/403
+
+### Fixed
+
+  * sam/io/reader/record: Only strip carriage return from CRLF newline.
 
 ## 0.86.0 - 2026-07-10
 
@@ -227,7 +231,7 @@
 ### Changed
 
   * sam/alignment/record/quality_scores: Change `QualityScores::iter` item to
-    be falliable.
+    be fallible.
 
     `QualityScores::iter` now returns an iterator over `io::Result<u8>`, as
     normalization of an underlying raw scores can fail.

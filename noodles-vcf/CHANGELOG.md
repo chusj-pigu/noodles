@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.90.0 - 2026-07-24
+
+### Changed
+
+  * vcf/header/parser: Change `Parser::parse` to use current parser.
+
+    This previously created a new parser, which may not have the same applied
+    options.
+
+  * vcf/variant/record_buf/builder: Initialize default builder.
+
+    The default builder now matches a default `RecordBuf`.
+
+  * vcf/variant/record_buf/filters: Require a single PASS filter for passing
+    status.
+
+    This matches the behavior of `vcf::variant::record::Filters::is_pass`.
+
+### Fixed
+
+  * vcf/io/reader/record: Only strip carriage return from CRLF newline.
+
 ## 0.89.0 - 2026-07-10
 
 ### Changed
