@@ -1,5 +1,8 @@
 // standard
 
+use std::error::Error;
+use std::fmt;
+use std::fmt::{Display, Formatter};
 // local
 use crate::{
     file::{FileRowIndex, RowCount},
@@ -7,6 +10,8 @@ use crate::{
 };
 // third party
 use arrow::array::RecordBatch;
+use arrow::array::ArrayRef;
+use crate::record::batch::arrays::DownCastFailure;
 
 mod run_info;
 mod read;
@@ -55,14 +60,8 @@ mod sealed {
 #[cfg_attr(feature = "backend", doc = "\n\nThis trait is sealed for [`RunInfoBatchCore`](backend::RunInfoBatchCore), [`ReadBatchCore`](backend::ReadBatchCore) and [`SignalBatchCore`](backend::SignalBatchCore).")]
 #[cfg_attr(not(feature = "backend"), doc = "\n\nThis trait is sealed for [`RunInfoBatch`]/[`ConcurrentRunInfoBatch`], [`ReadBatch`]/[`ConcurrentReadBatch`] and [`SignalBatch`]/[`ConcurrentSignalBatch`].")]
 pub trait Batch: sealed::Seal {
-    /// Returns a new `Batch`.
-    fn new(record_batch: RecordBatch, start_row: FileRowIndex, num_rows: RowCount) -> Self;
-
     /// Returns the [`Arrow`](arrow) [`RecordBatch`] the `Batch` wraps around.
     fn as_record_batch(&self) -> &RecordBatch;
-
-    /// Returns `true` if the [`RowIndex`](FileRowIndex) is within this `Batch`.
-    fn contains(&self, global_row: FileRowIndex) -> Option<bool>;
 }
 
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::RunInfoBatchCore<M> {}
@@ -70,6 +69,40 @@ impl<M: ConcurrencyMode> sealed::Seal for internal::backend::RunInfoBatchCore<M>
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::ReadBatchCore<M> {}
 
 impl<M: ConcurrencyMode> sealed::Seal for internal::backend::SignalBatchCore<M> {}
+
+
+#[derive(Debug, Clone)]
+/// Error raised when a [`Batch`] fails to initialize.
+pub struct InvalidColumnSet(Vec<ArrayRef>);
+
+impl Display for InvalidColumnSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid column set: {:?}", self.0)
+    }
+}
+
+impl Error for InvalidColumnSet {}
+
+#[derive(Debug, Clone)]
+/// Error raised when a [`Batch`] fails to initialize.
+pub enum BatchError {
+    /// The number of columns does not respect the schema
+    SchemaInconsistency(InvalidColumnSet),
+
+    /// The column is corrupted or otherwise incorrectly written.
+    CorruptedData(DownCastFailure),
+}
+
+impl Display for BatchError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SchemaInconsistency(e) => write!(f, "schema is not respected: {}", e),
+            Self::CorruptedData(e) => write!(f, "column data corrupted or incorrect: {}", e),
+        }
+    }
+}
+
+impl Error for BatchError {}
 
 
 /*
