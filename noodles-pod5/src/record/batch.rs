@@ -5,7 +5,6 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 // local
 use crate::{
-    file::{FileRowIndex, RowCount},
     io::reader::ConcurrencyMode
 };
 // third party
@@ -19,6 +18,7 @@ mod signal;
 mod batch_index;
 pub mod arrays;
 pub mod types;
+mod columns;
 
 pub use self::{
     read::{
@@ -43,6 +43,7 @@ pub(crate) mod internal {
             read::internal::*,
             run_info::internal::*,
             signal::internal::*,
+            columns::*,
         };
     }
 }

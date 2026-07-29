@@ -4,8 +4,8 @@
 use crate::record::batch::arrays::{DownCastFailure, SignalListArray};
 use arrow::{
     array::{
+        Array,
         ArrayRef,
-        ArrayData,
         DictionaryArray,
         StringArray,
         types::{
@@ -17,7 +17,6 @@ use arrow::{
     },
     datatypes::DataType,
 };
-use arrow::array::{Array, Int16Array, ListArray, PrimitiveArray};
 // local
 use crate::file::{
     BatchRowIndex,
