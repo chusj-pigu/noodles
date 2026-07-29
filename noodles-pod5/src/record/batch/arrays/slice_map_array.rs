@@ -1,12 +1,11 @@
 // standard
 
-use std::iter::Map;
 // third party
-use std::sync::Arc;
 use arrow::{
     array::{
-        MapArray,
         Array,
+        ArrayRef,
+        MapArray,
         StringArray,
     },
     datatypes::{
@@ -16,7 +15,6 @@ use arrow::{
         FieldRef,
     },
 };
-use arrow::array::ArrayRef;
 // local
 use crate::{
     file::{
@@ -28,12 +26,12 @@ use crate::{
         types::FlatMap,
     },
 };
-use crate::record::batch::arrays::UuidArray;
 
 /// Thin wrapper around Arrow's [`MapArray`].
 ///
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
+#[must_use]
 pub struct SliceMapArray {
     /// The wrapped array.
     wrapped_array: MapArray,
@@ -46,7 +44,6 @@ pub struct SliceMapArray {
 impl SliceMapArray {
     /// Verifies if the [`data_type`](DataType) corresponds to a `SliceMapArray`,
     /// returning [`DownCastFailure`] otherwise.
-    #[must_use]
     fn is_valid_slice_map_array(data_type: &DataType) -> Result<(), DownCastFailure> {
         if let DataType::List(field_ref) = data_type {
             if field_ref.data_type() == &DataType::UInt64 {
@@ -84,7 +81,6 @@ impl SliceMapArray {
     /// Attempts to create a new [`SliceMapArray`] from an Arrow [`ArrayRef`],
     /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    #[must_use]
     pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
         Self::is_valid_slice_map_array(array_ref.data_type())?;
         let array: MapArray = array_ref.to_data().into();
@@ -95,7 +91,6 @@ impl SliceMapArray {
 
     /// Creates a new wrapper around an Arrow [`MapArray`], [`StringArray`] and [`StringArray`].
     #[inline]
-    #[must_use]
     pub fn from_raw_parts(wrapped_array: MapArray, keys_array: StringArray, values_array: StringArray) -> Self {
         Self {
             wrapped_array,
@@ -119,7 +114,6 @@ impl SliceMapArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
-    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<FlatMap>, RowIndexOutOfBounds> {
         let array = &self.wrapped_array;
         let index: usize = index.into();

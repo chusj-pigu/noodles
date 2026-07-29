@@ -1,17 +1,24 @@
 // standard
 
 // third party
-use crate::record::batch::arrays::DownCastFailure;
-use arrow::array::{
-    TimestampMillisecondArray, 
-    Array,
-    ArrayRef,
+use arrow::{
+    array::{
+        Array,
+        ArrayRef,
+        TimestampMillisecondArray,
+    },
+    datatypes::{
+        DataType,
+        TimeUnit,
+    },
 };
-use arrow::datatypes::{DataType, TimeUnit};
 // local
-use crate::file::{
-    BatchRowIndex, 
-    RowIndexOutOfBounds,
+use crate::{
+    file::{
+        BatchRowIndex,
+        RowIndexOutOfBounds,
+    },
+    record::batch::arrays::DownCastFailure,
 };
 
 /// Thin wrapper around Arrow's [`TimestampMillisecondArray`].
@@ -19,13 +26,13 @@ use crate::file::{
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
 #[repr(transparent)]
+#[must_use]
 pub struct EpochMillisArray(TimestampMillisecondArray);
 
 impl EpochMillisArray {
     /// Attempts to create a new [`EpochMillisArray`] from an Arrow [`ArrayRef`],
     /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    #[must_use]
     pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
         if let DataType::Timestamp(TimeUnit::Millisecond, _) = array_ref.data_type() {
             return Ok(Self::from_raw_parts(array_ref.to_data().into()))
@@ -36,9 +43,8 @@ impl EpochMillisArray {
         })
     }
 
-    /// Creates a new wrapper arround an Arrow [`TimestampMillisecondArray`].
+    /// Creates a new wrapper around an Arrow [`TimestampMillisecondArray`].
     #[inline]
-    #[must_use]
     pub fn from_raw_parts(array: TimestampMillisecondArray) -> Self {
         Self(array)
     }
@@ -70,6 +76,6 @@ impl EpochMillisArray {
             return Ok(None);
         }
 
-        return Ok(Some(array.value(index)));
+        Ok(Some(array.value(index)))
     }
 }

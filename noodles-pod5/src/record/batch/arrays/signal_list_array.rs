@@ -1,5 +1,5 @@
 // standard
-use std::sync::Arc;
+
 // third party
 use arrow::{
     array::{
@@ -12,9 +12,9 @@ use arrow::{
     datatypes::{
         DataType,
         Field,
+        FieldRef,
     },
 };
-use arrow::datatypes::FieldRef;
 // local
 use crate::{
     file::{
@@ -39,7 +39,6 @@ impl SignalListArray {
 
     /// Verifies if the [`data_type`](DataType) corresponds to a `SignalListArray`,
     /// returning [`DownCastFailure`] otherwise.
-    #[must_use]
     fn is_valid_signal_list_array(data_type: &DataType) -> Result<(), DownCastFailure> {
         if let DataType::List(field_ref) = data_type {
             if *field_ref.data_type() == DataType::Int16 {
@@ -62,7 +61,6 @@ impl SignalListArray {
     /// Attempts to create a new [`SignalListArray`] from an Arrow [`ArrayRef`],
     /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    #[must_use]
     pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
         Self::is_valid_signal_list_array(array_ref.data_type())?;
         let array: ListArray = array_ref.to_data().into();
@@ -95,7 +93,6 @@ impl SignalListArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
-    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<&[i16]>, RowIndexOutOfBounds> {
         let array = &self.wrapped_array;
         let index: usize = index.into();

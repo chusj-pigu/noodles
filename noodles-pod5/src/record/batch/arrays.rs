@@ -12,12 +12,24 @@ use arrow::datatypes::DataType;
 // local
 
 
-mod complex;
-mod simple;
+mod epoch_millis_array;
+mod index_list_array;
+mod large_dataset;
+mod signal_list_array;
+mod simple_arrays;
+mod slice_map_array;
+mod string_dictionary;
+mod uuid_array;
 
 pub use {
-    complex::*,
-    simple::*,
+    epoch_millis_array::*,
+    index_list_array::*,
+    large_dataset::*,
+    signal_list_array::*,
+    simple_arrays::*,
+    slice_map_array::*,
+    string_dictionary::*,
+    uuid_array::*,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

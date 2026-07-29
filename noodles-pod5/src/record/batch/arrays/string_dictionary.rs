@@ -1,7 +1,6 @@
 // standard
 
 // third party
-use crate::record::batch::arrays::{DownCastFailure, SignalListArray};
 use arrow::{
     array::{
         Array,
@@ -18,12 +17,16 @@ use arrow::{
     datatypes::DataType,
 };
 // local
-use crate::file::{
-    BatchRowIndex,
-    RowIndexOutOfBounds,
+use crate::{
+    file::{
+        BatchRowIndex,
+        RowIndexOutOfBounds,
+    },
+    record::batch::arrays::DownCastFailure,
 };
 
 /// A type-erased wrapper around [`DictionaryArray`] that unifies its index types.
+#[must_use]
 pub enum StringDictionaryArray {
     /// variant keyed with signed 8-bit integers
     Int8(DictionaryArray<Int8Type>),
@@ -76,6 +79,7 @@ impl StringDictionaryArray {
 ///
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
+#[must_use]
 pub struct StringDictionary {
     /// The wrapped array.
     wrapped_array: StringDictionaryArray,
@@ -87,7 +91,6 @@ impl StringDictionary {
 
     /// Verifies if the [`data_type`](DataType) corresponds to a `SignalListArray`,
     /// returning [`DownCastFailure`] otherwise.
-    #[must_use]
     fn is_valid_signal_list_array(data_type: &DataType) -> Result<&DataType, DownCastFailure> {
         let key_type = if let DataType::Dictionary(key_type, value_type) = data_type {
             if **value_type == DataType::Utf8 {
@@ -117,16 +120,15 @@ impl StringDictionary {
     /// Attempts to create a new [`SignalListArray`] from an Arrow [`ArrayRef`],
     /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    #[must_use]
     pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
         let index_type = Self::is_valid_signal_list_array(array_ref.data_type())?;
-        let dictionnary = array_ref.to_data();
-        let data = dictionnary.child_data()[0].clone();
+        let dictionary = array_ref.to_data();
+        let data = dictionary.child_data()[0].clone();
         let array: StringDictionaryArray = match index_type {
-            DataType::Int8 => StringDictionaryArray::Int8(dictionnary.into()),
-            DataType::Int16 => StringDictionaryArray::Int16(dictionnary.into()),
-            DataType::Int32 => StringDictionaryArray::Int32(dictionnary.into()),
-            DataType::Int64 => StringDictionaryArray::Int64(dictionnary.into()),
+            DataType::Int8 => StringDictionaryArray::Int8(dictionary.into()),
+            DataType::Int16 => StringDictionaryArray::Int16(dictionary.into()),
+            DataType::Int32 => StringDictionaryArray::Int32(dictionary.into()),
+            DataType::Int64 => StringDictionaryArray::Int64(dictionary.into()),
             _ => unimplemented!(),
         };
         Ok(Self::from_raw_parts(array, data.into()))
@@ -134,7 +136,6 @@ impl StringDictionary {
 
     /// Creates a new wrapper around an Arrow [`StringDictionaryArray`] and [`StringArray`].
     #[inline]
-    #[must_use]
     pub fn from_raw_parts(wrapped_array: StringDictionaryArray, data_array: StringArray) -> Self {
         Self {
             wrapped_array,
@@ -157,7 +158,6 @@ impl StringDictionary {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
-    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<&str>, RowIndexOutOfBounds> {
         let array = &self.wrapped_array;
         let index: usize = index.into();

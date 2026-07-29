@@ -1,5 +1,5 @@
 // standard
-use std::sync::Arc;
+
 // third party
 use arrow::{
     array::{
@@ -12,9 +12,9 @@ use arrow::{
     datatypes::{
         DataType,
         Field,
+        FieldRef,
     },
 };
-use arrow::datatypes::FieldRef;
 // local
 use crate::{
     file::{
@@ -28,6 +28,7 @@ use crate::{
 ///
 /// This wrapper removes Arrow types from the public API while providing a
 /// consistent indexing interface shared by the crate's array wrappers.
+#[must_use]
 pub struct IndexListArray {
     /// The wrapped array.
     wrapped_array: ListArray,
@@ -38,7 +39,6 @@ pub struct IndexListArray {
 impl IndexListArray {
     /// Verifies if the [`data_type`](DataType) corresponds to a `IndexListArray`,
     /// returning [`DownCastFailure`] otherwise.
-    #[must_use]
     fn is_valid_index_list_array(data_type: &DataType) -> Result<(), DownCastFailure> {
         if let DataType::List(field_ref) = data_type {
             if *field_ref.data_type() == DataType::UInt64 {
@@ -61,7 +61,6 @@ impl IndexListArray {
     /// Attempts to create a new [`IndexListArray`] from an Arrow [`ArrayRef`],
     /// returning [`DownCastFailure`] otherwise.
     #[inline]
-    #[must_use]
     pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
         Self::is_valid_index_list_array(array_ref.data_type())?;
         let array: ListArray = array_ref.to_data().into();
@@ -71,7 +70,6 @@ impl IndexListArray {
 
     /// Creates a new wrapper around an Arrow [`ListArray`] and [`UInt64Array`].
     #[inline]
-    #[must_use]
     pub fn from_raw_parts(wrapped_array: ListArray, data_array: UInt64Array) -> Self {
         Self {
             wrapped_array,
@@ -94,7 +92,6 @@ impl IndexListArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
-    #[must_use]
     pub fn index(&self, index: BatchRowIndex) -> Result<Option<&[u64]>, RowIndexOutOfBounds> {
         let array = &self.wrapped_array;
         let index: usize = index.into();
