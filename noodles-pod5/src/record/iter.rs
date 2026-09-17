@@ -1,3 +1,5 @@
+//! todo: iter module doc
+
 mod run_info;
 mod read;
 mod signal;
@@ -5,27 +7,14 @@ mod signal;
 pub use self::{
     run_info::{
         RunInfoIter,
-        ConcurrentRunInfoIter
+        RunInfoIterContract
     },
     read::{
         ReadIter,
-        ConcurrentReadIter,
+        ReadIterContract,
     },
     signal::{
-        SignalBuffer,
-        ConcurrentSignalBuffer,
-    },
-};
-
-pub(crate) mod internal {
-    pub mod backend {
-        pub use self::super::super::{
-            run_info::internal::*,
-            read::internal::*,
-            signal::internal::*,
-        };
+        SignalBufferIter,
+        SignalBufferIterContract,
     }
-}
-
-#[cfg(feature = "backend")]
-pub use self::internal::backend;
+};

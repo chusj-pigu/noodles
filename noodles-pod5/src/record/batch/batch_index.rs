@@ -63,10 +63,7 @@ impl BatchIndexLookup {
             return None;
         }
         let result = indexes.binary_search(value);
-        let batch_index = match result {
-            Ok(batch_index) => batch_index,
-            Err(batch_index) => batch_index,
-        };
+        let batch_index = result.unwrap_or_else(|batch_index| batch_index);
         Some(BatchIndex::new(batch_index as u32))
     }
 
@@ -142,3 +139,61 @@ impl<M: ConcurrencyMode> BatchIndexCache<M> {
         Some(batch)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord,)]
+///
+pub struct BatchRange {
+    /// The `start` of the `BatchRange`.
+    start: usize,
+    /// The `length` of the `BatchRange`.
+    length: usize,
+}
+
+impl BatchRange {
+    /// Returns a new `BatchRange`.
+    pub fn new(start: usize, length: usize) -> Self {
+        Self { start, length }
+    }
+
+    /// Returns the `start` of the `BatchRange`.
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Returns the `length` of the `BatchRange`.
+    pub fn length(&self) -> usize {
+        self.length
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord,)]
+///
+pub struct TableRange {
+    /// The `start` of the `TableRange`.
+    start: usize,
+    /// The `length` of the `TableRange`.
+    length: usize,
+}
+
+impl TableRange {
+    /// Returns a new `TableRange`.
+    pub fn new(start: usize, length: usize) -> Self {
+        Self { start, length }
+    }
+
+    /// Returns the `start` of the `TableRange`.
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Returns the `length` of the `TableRange`.
+    pub fn length(&self) -> usize {
+        self.length
+    }
+}
+
+
+
+/*
+
+*/

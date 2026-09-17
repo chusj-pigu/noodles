@@ -1,14 +1,17 @@
 /// A lightweight, contiguous vector-backed map.
 ///
-/// It mainly serves to give convenient access to the data.
-/// It makes no promises as regards to the uniqueness of keys,
-/// nor does it defend against such.
+/// This type provides convenient access to key-value metadata stored within POD5 records.
+/// Internally, entries are stored in insertion order in a contiguous vector,
+/// and lookups perform a linear search.
+///
+/// Keys are not required to be unique.
+/// When duplicate keys are present, methods such as [get] return the first matching entry.
 pub struct FlatMap<'a> {
     data: Vec<(&'a str, &'a str)>,
 }
 
 impl<'a> FlatMap<'a> {
-    /// Returns a new `FlatMap` from a vector of key-value tuples.
+    /// Creates a new `FlatMap` from a vector of key-value tuples.
     pub fn new(data: Vec<(&'a str, &'a str)>) -> Self {
         Self {
             data
@@ -25,22 +28,31 @@ impl<'a> FlatMap<'a> {
             .map(|(_, b)| *b)
     }
 
-    /// Returns `true` if the map contains a value for the specified key.
+    /// Returns `true` if at least one matching key exists.
     pub fn contains_key(&self, key: &str) -> bool {
         self.data.iter().any(|(a, _)| a == &key)
     }
 
-    /// Returns an iterator visiting all keys in insertion order.
+    /// Returns `true` if the map contains duplicate keys.
+    pub fn has_duplicate_keys(&self) -> bool {
+        let data = &self.data;
+        let mut indices: Vec<usize> = (0..data.len()).collect();
+        indices.sort_unstable_by_key(|&i| data[i].0);
+        indices.windows(2).any(|ij| data[ij[0]].0 == data[ij[1]].0)
+    }
+
+    /// Returns an iterator over the keys in insertion order.
     pub fn keys(&self) -> impl Iterator<Item = &'a str> {
         self.data.iter().map(|(a, _)| a.clone())
     }
 
-    /// Returns an iterator visiting all values in insertion order.
+    /// Returns an iterator over the values in insertion order.
     pub fn values(&self) -> impl Iterator<Item = &'a str> {
         self.data.iter().map(|(_, value)| value.clone())
     }
 
     /// Returns the number of elements in the map.
+    /// Duplicate keys are counted as distinct entries.
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -50,7 +62,7 @@ impl<'a> FlatMap<'a> {
         self.data.is_empty()
     }
 
-    /// Returns an iterator over the key-value reference pairs.
+    /// Returns an iterator over the key-value pairs in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = &(&'a str, &'a str)> {
         self.data.iter()
     }

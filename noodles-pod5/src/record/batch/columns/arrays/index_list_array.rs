@@ -16,13 +16,14 @@ use arrow::{
     },
 };
 // local
-use crate::{
-    file::{
-        BatchRowIndex,
-        RowIndexOutOfBounds,
-    },
-    record::batch::arrays::DownCastFailure,
+use crate::file::{
+    BatchRowIndex,
+    IndexOutOfBounds,
 };
+use crate::file::schema::SchemaError;
+// local
+use crate::record::batch::columns::arrays::{DownCastFailure, FieldType};
+use crate::record::batch::internal::arrays::{Indexable, TryFromArrayRef};
 
 /// Thin wrapper around Arrow's [`ListArray`].
 ///
@@ -58,16 +59,6 @@ impl IndexListArray {
         })
     }
 
-    /// Attempts to create a new [`IndexListArray`] from an Arrow [`ArrayRef`],
-    /// returning [`DownCastFailure`] otherwise.
-    #[inline]
-    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
-        Self::is_valid_index_list_array(array_ref.data_type())?;
-        let array: ListArray = array_ref.to_data().into();
-        let data = array.values().to_data().clone();
-        Ok(Self::from_raw_parts(array, PrimitiveArray::from(data).into()))
-    }
-
     /// Creates a new wrapper around an Arrow [`ListArray`] and [`UInt64Array`].
     #[inline]
     pub fn from_raw_parts(wrapped_array: ListArray, data_array: UInt64Array) -> Self {
@@ -92,12 +83,45 @@ impl IndexListArray {
     ///
     /// Returns an error if the row index is out of bounds.
     #[inline]
-    pub fn index(&self, index: BatchRowIndex) -> Result<Option<&[u64]>, RowIndexOutOfBounds> {
+    pub fn index2(&self, index: BatchRowIndex) -> Result<Option<&[u64]>, IndexOutOfBounds> {
         let array = &self.wrapped_array;
         let index: usize = index.into();
 
         if index >= array.len() {
-            return Err(RowIndexOutOfBounds);
+            return Err(IndexOutOfBounds::from(index));
+        }
+
+        if array.is_null(index) {
+            return Ok(None);
+        }
+
+        let offsets = array.offsets();
+        let start = offsets[index] as usize;
+        let len = array.value_length(index) as usize;
+
+        Ok(Some(&self.data_array.values()[start..start + len]))
+    }
+}
+
+impl TryFromArrayRef for IndexListArray {
+    #[inline]
+    fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, SchemaError> {
+        FieldType::List.validate(array_ref.data_type())?;
+        let array: ListArray = array_ref.to_data().into();
+        let data = array.values().to_data().clone();
+        Ok(Self::from_raw_parts(array, PrimitiveArray::from(data).into()))
+    }
+}
+
+impl Indexable for IndexListArray {
+    type Value<'a> = &'a [u64];
+
+    fn index(&self, index: BatchRowIndex) -> Result<Option<&[u64]>, IndexOutOfBounds> {
+        let array = &self.wrapped_array;
+        let index: usize = index.into();
+
+        if index >= array.len() {
+            return Err(IndexOutOfBounds::from(index));
         }
 
         if array.is_null(index) {

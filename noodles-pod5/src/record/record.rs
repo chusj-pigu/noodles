@@ -1,69 +1,64 @@
 // standard
-
+use std::{
+    error::Error,
+    fmt::{
+        self,
+        Display,
+        Formatter,
+    },
+};
 // third party
 
-use std::error::Error;
-use std::fmt;
-use std::fmt::{Display, Formatter};
 // local
 use crate::{
-    io::reader::BatchAccess,
-    record::batch::Batch,
+    io::reader::ReferenceModel,
+    file::IndexOutOfBounds,
+    record::batch::internal::BatchColumns,
 };
-use crate::io::reader::ConcurrencyMode;
 
-mod run_info;
+pub mod types;
 mod read;
+mod run_info;
 mod signal;
-
+mod buffer;
 
 pub use self::{
-    run_info::{
-        RunInfoRecord,
-        ConcurrentRunInfoRecord,
-    },
-    read::{
-        ReadRecord,
-        ConcurrentReadRecord,
-        ReadColumnError,
-    },
-    signal::{
-        SignalRecord,
-        ConcurrentSignalRecord,
-    },
+    read::{ReadRecord, ReadError, ReadColumnError},
+    run_info::{RunInfoRecord, RunInfoError, RunInfoColumnError},
+    signal::{SignalRecord, SignalError, SignalColumnError, SignalData},
+    buffer::SignalBuffer
 };
 
 pub(crate) mod internal {
-    pub mod backend {
+    pub mod contracts {
         pub use self::super::super::{
-            run_info::internal::*,
-            read::internal::{
-                ReadRecord,
-                ReadRecordCore,
-            },
-            signal::internal::*,
+            read::ReadRecordContract,
+            run_info::RunInfoRecordContract,
+            signal::SignalRecordContract,
+            buffer::SignalBufferContract,
         };
     }
 }
 
 #[cfg(feature = "backend")]
-pub use self::internal::backend;
+pub use self::internal::contracts;
 
 
-/// The `Record` is the fundamental logical unit for reasoning.
-/// It represents a single row within a table of the [`POD5 file`](crate::file::Pod5).
+/// A `Record` provides access to a specific row in a [`Batch`](crate::record::batch)
+/// and describes how it can be turned into an owned variant which can live longer and
+/// has additional properties.
 ///
-/// This trait defines the conversion contract of `Records`, to turn them into owned variants.
-/// This trait is implemented for the [`RunInfoRecord`](RunInfoRecord), the
-/// [`ReadRecord`](ReadRecord), and the [`SignalRecord`](SignalRecord).
-pub trait Record<A: BatchAccess>
+///
+
+/// A `Record` can  
+pub trait Record<R: ReferenceModel>
 {
     /// The type of [`Batch`] the record references.
-    type Batch: Batch;
+    type BatchColumns: BatchColumns;
 
     /// The longer lived version of the [`BatchAccess`] pointer of the record.
-    type OwnedRecord: Record<A::BatchHandle<Self::Batch>>;
+    type StoredRecord: Record<R::StoredReferenceModel<Self::BatchColumns>>;
 
     /// Converts a record from local access to a longer-lived owned version.
-    fn to_owned(self) -> Self::OwnedRecord;
+    fn to_stored(self) -> Self::StoredRecord;
 }

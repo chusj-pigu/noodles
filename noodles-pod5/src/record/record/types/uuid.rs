@@ -12,30 +12,39 @@ use std::fmt;
 /// It intentionally exposes only the UUID's representation, not
 /// higher-level operations such as parsing or version inspection.
 ///
-/// Applications requiring parsing or UUID-specific inspection can convert the bytes into `uuid::Uuid`.
+/// Applications requiring UUID-specific operations,
+/// such as version inspection or parsing,
+/// can construct a `uuid::Uuid` from the underlying bytes.
 #[repr(transparent)]
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[must_use]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone)]
 pub struct Uuid<'a>(&'a [u8; 16]);
 
 impl<'a> Uuid<'a> {
-    /// Returns a borrowed view over `bytes`.
+    /// Creates a borrowed view over `bytes`.
     ///
     /// The returned reference points directly to the provided array.
     /// No allocation or copy is performed.
     #[inline]
-    #[must_use]
     pub const fn from_bytes(bytes: &'a [u8; 16]) -> Self {
         Uuid(bytes)
     }
 
     /// Returns a reference to the underlying UUID bytes.
     #[inline]
+    #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
+
+    /// Returns a copy of the underlying UUID bytes.
+    #[inline]
+    #[must_use]
+    pub const fn to_bytes(&self) -> [u8; 16] {
+        *self.0
+    }
 }
 
-/// Implement Display so users can log/print the record identifier natively.
 impl<'a> fmt::Display for Uuid<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -76,6 +85,13 @@ impl<'a> fmt::Display for Uuid<'a> {
 impl<'a> PartialEq<[u8; 16]> for Uuid<'a> {
     #[inline]
     fn eq(&self, other: &[u8; 16]) -> bool {
+        self.0 == other
+    }
+}
+
+impl<'a> PartialEq<[u8]> for Uuid<'a> {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
         self.0 == other
     }
 }

@@ -1,8 +1,11 @@
+//! todo: flatbuffer module doc
+
 mod flatbuffer {
     include!(concat!(env!("OUT_DIR"), "/footer_generated.rs"));
 }
 
-pub(crate) mod Footer {
+pub(crate) mod footer {
+    //! todo: flatbuffer footer module doc
     pub(crate) use self::super::flatbuffer::minknow::reads_format::{
         Footer,
         FooterArgs,
@@ -10,7 +13,8 @@ pub(crate) mod Footer {
         FooterOffset
     };
 }
-pub(crate) mod EmbeddedFile {
+pub(crate) mod embedded_file {
+    //! todo: flatbuffer embedded_file module doc
     pub(crate) use self::super::flatbuffer::minknow::reads_format::{
         EmbeddedFile,
         EmbeddedFileArgs,

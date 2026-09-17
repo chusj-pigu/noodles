@@ -24,7 +24,7 @@ impl FileRowIndex {
     }
 
     /// Converts a slice of `u64` into a slice of `FileRowIndexes`.
-    pub fn from_slice<'a>(values: &'a [u64]) -> &'a [Self] {
+    pub fn from_slice(values: &[u64]) -> &[Self] {
         // Safety:
         // Layout is identical and ReadIterIndex has no invariants
         unsafe {
@@ -57,11 +57,11 @@ impl FileRowIndex {
     }
 
     /// Returns whether this `RowIndex` is within the range described by
-    /// the start `RowIndex` and the lenght [`RowCount`], or None if the
+    /// the start `RowIndex` and the length [`RowCount`], or None if the
     /// `RowIndex` is not a valid [`BatchRowIndex`] from `start`.
-    pub fn in_range(&self, start: Self, lenght: RowCount) -> Option<bool> {
-        let local = self.local(start)?;
-        Some(local.value() < lenght.value())
+    pub fn in_range(&self, start: Self, length: RowCount) -> Option<bool> {
+        let local = self.local(start)?.value() as u64;
+        Some(local < length.value())
     }
 }
 
@@ -114,22 +114,22 @@ impl From<BatchRowIndex> for usize {
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// The number of rows within a single [`Batch`](crate::record::batch::Batch).
-pub struct RowCount(u32);
+pub struct RowCount(u64);
 
 impl RowCount {
     /// Returns a new `RowCount`.
-    pub fn new(value: u32) -> Self {
+    pub fn new(value: u64) -> Self {
         Self(value)
     }
 
     /// Returns the value of the `RowCount`.
-    pub fn value(&self) -> u32 {
+    pub fn value(&self) -> u64 {
         self.0
     }
 }
 
-impl From<u32> for RowCount {
-    fn from(value: u32) -> Self {
+impl From<u64> for RowCount {
+    fn from(value: u64) -> Self {
         Self(value)
     }
 }
@@ -140,14 +140,20 @@ impl From<RowCount> for usize {
     }
 }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-/// An error where the user passes in a row index which is too big.
-pub struct RowIndexOutOfBounds;
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+/// An error where the user passes in an index which is too big.
+pub struct IndexOutOfBounds(pub u64);
 
-impl Display for RowIndexOutOfBounds {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "Row index is out of bounds")
+impl From<usize> for IndexOutOfBounds {
+    fn from(u: usize) -> Self {
+        Self(u as u64)
     }
 }
 
-impl Error for RowIndexOutOfBounds {}
+impl Display for IndexOutOfBounds {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "Index {} is out of bounds", self.0)
+    }
+}
+
+impl Error for IndexOutOfBounds {}

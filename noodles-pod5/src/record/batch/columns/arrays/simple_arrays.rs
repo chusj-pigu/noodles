@@ -3,28 +3,29 @@
 // third party
 use arrow::{
     array::{
+        self,
         Array,
         ArrayRef,
-        self,
     },
     datatypes::DataType,
 };
 // local
-use crate::{
-    file::{
-        BatchRowIndex,
-        RowIndexOutOfBounds,
-    },
-    record::batch::arrays::DownCastFailure,
+use crate::file::{
+    BatchRowIndex,
+    IndexOutOfBounds,
 };
+use crate::file::schema::SchemaError;
+// local
+use crate::record::batch::columns::arrays::{DownCastFailure, FieldType};
+use crate::record::batch::internal::arrays::{Indexable, TryFromArrayRef};
 
 macro_rules! simple_array {
     (
         $name:ident,
-        $datatype:ident,
+        $field_type:ident,
         $value:ty
     ) => {
-        simple_array_dynamic!($name, $name, $datatype, $value);
+        simple_array_dynamic!($name, $name, $field_type, $value);
     };
 }
 
@@ -32,7 +33,7 @@ macro_rules! simple_array_dynamic {
     (
         $wrapper:ident,
         $arrow:ident,
-        $datatype:ident,
+        $field_type:ident,
         $value:ty
     ) => {
         #[doc = concat!("Thin wrapper around Arrow's [", stringify!($arrow), "](array::", stringify!($arrow), ").")]
@@ -44,24 +45,6 @@ macro_rules! simple_array_dynamic {
         pub struct $wrapper(array::$arrow);
 
         impl $wrapper {
-            #[doc = concat!("Attempts to create a new [", stringify!($wrapper), "] from an Arrow [`ArrayRef`],")]
-            /// returning [`DownCastFailure`] otherwise.
-            #[inline]
-            pub fn try_from_array_ref(
-                array_ref: &ArrayRef,
-            ) -> Result<Self, DownCastFailure> {
-                let expected = DataType::$datatype;
-
-                if array_ref.data_type() != &expected {
-                    return Err(DownCastFailure {
-                        actual: array_ref.data_type().clone(),
-                        expected,
-                    });
-                }
-
-                Ok(Self::from_raw_parts(array_ref.to_data().into()))
-            }
-
             #[doc = concat!("Creates a new wrapper around an Arrow [", stringify!($arrow), "](array::", stringify!($arrow), ").")]
             #[inline]
             pub fn from_raw_parts(array: array::$arrow) -> Self {
@@ -74,6 +57,54 @@ macro_rules! simple_array_dynamic {
             pub fn to_raw_parts(self) -> array::$arrow {
                 self.0
             }
+        }
+        
+        impl TryFromArrayRef for $wrapper {
+            #[inline]
+            fn try_from_array_ref(
+                array_ref: &ArrayRef,
+            ) -> Result<Self, SchemaError> {
+                FieldType::$field_type.validate(array_ref.data_type())?;
+                Ok(Self::from_raw_parts(array_ref.to_data().into()))
+            }
+        }
+        
+        impl Indexable for $wrapper {
+            type Value<'a> = $value;
+
+            fn index<'a>(&'a self, index: BatchRowIndex) -> Result<Option<$value>, IndexOutOfBounds> {
+                let array = &self.0;
+                let index: usize = index.into();
+
+                if index >= array.len() {
+                    return Err(IndexOutOfBounds::from(index));
+                }
+
+                if array.is_null(index) {
+                    return Ok(None);
+                }
+
+                Ok(Some(array.value(index)))
+            }
+        }
+    };
+}
+
+simple_array!(BooleanArray,Bool,bool);
+simple_array_dynamic!(EpochMillisArray, TimestampMillisecondArray, Timestamp, i64);
+simple_array!(Float32Array,Float,f32);
+simple_array!(Int16Array,Int16,i16);
+simple_array_dynamic!(SignalBinaryArray, LargeBinaryArray, LargeBinary, &'a [u8]);
+simple_array!(StringArray,Utf8,&'a str);
+simple_array!(UInt8Array,UInt8,u8);
+simple_array!(UInt16Array,UInt16,u16);
+simple_array!(UInt32Array,UInt32,u32);
+simple_array!(UInt64Array,UInt64,u64);
+
+
+/*
+
+
 
             /// Returns the value stored at the given batch row.
             ///
@@ -100,16 +131,5 @@ macro_rules! simple_array_dynamic {
 
                 Ok(Some(array.value(index)))
             }
-        }
-    };
-}
 
-simple_array!(BooleanArray,Boolean,bool);
-simple_array!(Float32Array,Float32,f32);
-simple_array!(Int16Array,Int16,i16);
-simple_array_dynamic!(SignalBinaryArray, LargeBinaryArray, LargeBinary, &[u8]);
-simple_array!(StringArray,Utf8,&str);
-simple_array!(UInt8Array,UInt8,u8);
-simple_array!(UInt16Array,UInt16,u16);
-simple_array!(UInt32Array,UInt32,u32);
-simple_array!(UInt64Array,UInt64,u64);
+*/

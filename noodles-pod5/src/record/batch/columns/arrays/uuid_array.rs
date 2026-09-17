@@ -1,7 +1,7 @@
 // standard
 use std::{
     error::Error,
-    fmt, 
+    fmt,
 };
 // third party
 use arrow::{
@@ -13,52 +13,59 @@ use arrow::{
     datatypes::DataType
 };
 // local
-use crate::{
-    file::{
-        BatchRowIndex,
-        RowIndexOutOfBounds,
-    },
-    record::batch::{
-        arrays::DownCastFailure,
-        types::Uuid,
-    },
+use crate::file::{
+    BatchRowIndex,
+    IndexOutOfBounds,
 };
+use crate::file::schema::SchemaError;
+// local
+use crate::record::batch::columns::arrays::{DownCastFailure, FieldType};
+use crate::record::batch::internal::arrays::{Indexable, TryFromArrayRef};
+// local
+use crate::record::record::types::Uuid;
 
 /// A non-null UUID value did not contain exactly 16 bytes.
 ///
 /// This indicates that the underlying Arrow array contains invalid data.
 /// The contained value is the number of bytes that were found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UuidArrayLengthError(usize);
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct InvalidUUIDLength(usize);
 
-impl fmt::Display for UuidArrayLengthError {
+impl fmt::Display for InvalidUUIDLength {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "UUID value contains {} bytes instead of 16.", self.0)
     }
 }
 
-impl Error for UuidArrayLengthError {}
+impl Error for InvalidUUIDLength {}
 
 /// Errors returned when accessing values from a [`UuidArray`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum UuidArrayError {
     /// The requested row index is outside the bounds of the array.
-    RowIndexOutOfBounds(RowIndexOutOfBounds),
+    RowIndexOutOfBounds(IndexOutOfBounds),
 
     /// A non-null UUID value did not contain exactly 16 bytes.
-    InvalidLength(UuidArrayLengthError),
+    InvalidUUIDLength(InvalidUUIDLength),
 }
 
 impl fmt::Display for UuidArrayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RowIndexOutOfBounds(e) => write!(f, "Uuid array index error: {}", e),
-            Self::InvalidLength(e) => write!(f, "Uuid array length error: {}", e),
+            Self::RowIndexOutOfBounds(_) => write!(f, "Uuid array index error"),
+            Self::InvalidUUIDLength(_) => write!(f, "Uuid array length error"),
         }
     }
 }
 
-impl Error for UuidArrayError {}
+impl Error for UuidArrayError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::RowIndexOutOfBounds(e) => Some(e),
+            Self::InvalidUUIDLength(e) => Some(e),
+        }
+    }
+}
 
 /// Thin wrapper around Arrow's [`FixedSizeBinaryArray`].
 ///
@@ -71,20 +78,6 @@ impl Error for UuidArrayError {}
 pub struct UuidArray(FixedSizeBinaryArray);
 
 impl UuidArray {
-    /// Attempts to create a new [`UuidArray`] from an Arrow [`ArrayRef`],
-    /// returning [`DownCastFailure`] otherwise.
-    #[inline]
-    pub fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, DownCastFailure> {
-        let expected = DataType::FixedSizeBinary(16);
-        if array_ref.data_type() != &expected {
-            return Err(DownCastFailure{
-                actual: array_ref.data_type().clone(),
-                expected
-            });
-        }
-        Ok(Self::from_raw_parts(array_ref.to_data().into()))
-    }
-
     /// Creates a new wrapper around an Arrow [`FixedSizeBinaryArray`].
     #[inline]
     pub fn from_raw_parts(array: FixedSizeBinaryArray) -> Self {
@@ -107,12 +100,12 @@ impl UuidArray {
     /// Returns an error if the row index is out of bounds or if a non-null
     /// value does not contain exactly 16 bytes.
     #[inline]
-    pub fn index(&self, index: BatchRowIndex) -> Result<Option<Uuid>, UuidArrayError> {
+    pub fn index2(&self, index: BatchRowIndex) -> Result<Option<Uuid>, UuidArrayError> {
         let array = &self.0;
         let index: usize = index.into();
 
         if index >= array.len() {
-            return Err(UuidArrayError::RowIndexOutOfBounds(RowIndexOutOfBounds));
+            return Err(UuidArrayError::RowIndexOutOfBounds(IndexOutOfBounds::from(index)));
         }
 
         if array.is_null(index) {
@@ -126,6 +119,43 @@ impl UuidArray {
             return Ok(Some(Uuid::from_bytes(data)));
         }
 
-        Err(UuidArrayError::InvalidLength(UuidArrayLengthError(len)))
+        Err(UuidArrayError::InvalidUUIDLength(InvalidUUIDLength(len)))
+    }
+}
+
+impl TryFromArrayRef for UuidArray {
+    #[inline]
+    fn try_from_array_ref(array_ref: &ArrayRef) -> Result<Self, SchemaError> {
+        FieldType::Uuid.validate(array_ref.data_type())?;
+        Ok(Self::from_raw_parts(array_ref.to_data().into()))
+    }
+}
+
+impl Indexable for UuidArray {
+    type Value<'a> = Result<Uuid<'a>, InvalidUUIDLength>;
+
+    fn index(&self, index: BatchRowIndex) 
+        -> Result<Option<
+            Result<Uuid, InvalidUUIDLength>
+        >, IndexOutOfBounds> {
+        let array = &self.0;
+        let index: usize = index.into();
+
+        if index >= array.len() {
+            return Err(IndexOutOfBounds::from(index));
+        }
+
+        if array.is_null(index) {
+            return Ok(None);
+        }
+
+        let value = array.value(index);
+        let len = value.len();
+
+        if let Ok(data) = <&[u8; 16]>::try_from(value) {
+            return Ok(Some(Ok(Uuid::from_bytes(data))));
+        }
+
+        Ok(Some(Err(InvalidUUIDLength(len))))
     }
 }
