@@ -6,47 +6,287 @@
 
 mod internal {
     // standard
-    use std::{rc::Rc, sync::Arc, ops::Deref, fmt};
-    use std::error::Error;
-    use std::fmt::{Display, Formatter};
+    use std::{fmt, ops::Deref, rc::Rc, sync::Arc, error::Error, fmt::{
+        Display,
+        Formatter,
+    }, rc, sync};
     //third party
     use arc_swap::Guard;
     // local
-    use crate::record::batch::Batch;
-    use crate::file::manager::{BatchUsageTracker, Capacity, RcBatchUsageTracker, ArcBatchUsageTracker};
+    use crate::{
+        file::distribution::{
+            ArcBatchRefTracker,
+            BatchRefTracker,
+            Capacity,
+            BatchRegistry,
+            RcBatchRefTracker,
+        },
+        record::batch::{
+            internal::BatchColumns,
+            BatchCore,
+            BatchResult,
+        },
+    };
+    use crate::record::batch::BatchError;
+    use crate::io::decoder::SignalDecoder;
 
     mod sealed {
-        pub trait ConcurrencySeal {}
-        pub trait SharedSeal {}
+        /// todo
+        pub trait RefCountedSeal {}
 
-        pub trait BatchAccessSeal {}
+        /// todo
+        pub trait ErrorRefSeal {}
+
+        /// todo
+        pub trait WeakRefCountedSeal {}
+
+        /// todo
+        pub trait BatchRefSeal {}
+
+        /// todo
+        pub trait ConcurrencySeal {}
     }
 
-    /// A trait used to restrict generic parameters and types to proper refs.
-    /// A ref gives read access to the underlying data `T` to any number of readers.
-    /// It is implemented for the [`Arc`], the [`Rc`] and the [`ArcGuard`].
-    pub trait SharedAccess<M: ConcurrencyMode, T>: Deref<Target = T> + sealed::SharedSeal {}
+    /// todo
+    pub trait WeakRefCounted<M: ConcurrencyMode, T>: sealed::WeakRefCountedSeal + Clone {
+        /// todo
+        type RefCounted: RefCounted<M, T>;
 
-    /// A trait used to restrict generic parameters and types to proper owned refs.
-    /// It owns the data `t` it shares with the readers.
-    /// It is implemented for the [`Arc`] and the [`Rc`].
-    pub trait RefCounted<M: ConcurrencyMode, T>: SharedAccess<M, T>{}
+        /// todo
+        fn upgrade(&self) -> Option<Self::RefCounted>;
+    }
 
-    impl<T> sealed::SharedSeal for Rc<T> {}
+    impl<T> sealed::WeakRefCountedSeal for rc::Weak<T> {}
 
-    impl<T> SharedAccess<Local, T> for Rc<T> {}
+    impl<T> WeakRefCounted<Local, T> for rc::Weak<T> {
+        type RefCounted = Rc<T>;
 
-    impl<T> RefCounted<Local, T> for Rc<T>{}
+        fn upgrade(&self) -> Option<Self::RefCounted> {
+            self.upgrade()
+        }
+    }
 
-    impl<T> sealed::SharedSeal for Arc<T> {}
+    impl<T> sealed::WeakRefCountedSeal for sync::Weak<T> {}
 
-    impl<T> SharedAccess<Atomic, T> for Arc<T> {}
+    impl<T> WeakRefCounted<Atomic, T> for sync::Weak<T> {
+        type RefCounted = Arc<T>;
 
-    impl<T> RefCounted<Atomic, T> for Arc<T>{}
+        fn upgrade(&self) -> Option<Self::RefCounted> {
+            self.upgrade()
+        }
+    }
 
-    /// A temporary, thread-safe local view of a [`Batch`].
+    /// A reference-counting pointer.
     ///
-    /// `ArcGuard` wraps an [`arc_swap`](arc_swap)`::`[`Guard<Option<Arc<Batch>>>`](Guard).
+    /// `RefCounted<M, T>` provides shared ownership of a value of type `T`,
+    /// allocated in the heap.
+    /// Invoking clone on `RefCounted` produces a new `RefCounted` instance,
+    /// which points to the same allocation on the heap as the source
+    /// `RefCounted`, while increasing a reference count.
+    /// When the last `RefCounted` pointer to a given allocation is destroyed,
+    /// the value stored in that allocation (often referred to as "inner value")
+    /// is also dropped.
+    ///
+    /// M describes whether the pointer is single-threaded only or thread safe.
+    pub trait RefCounted<M: ConcurrencyMode, T>: sealed::RefCountedSeal + Clone + Deref {
+        /// todo
+        type WeakRefCounted: WeakRefCounted<M, T>;
+
+        /// todo
+        fn new(t: T) -> Self;
+
+        /// todo
+        fn downgrade(self) -> (Self, Self::WeakRefCounted);
+    }
+
+    impl<T> sealed::RefCountedSeal for Rc<T> {}
+    impl<T> RefCounted<Local, T> for Rc<T>{
+        type WeakRefCounted = rc::Weak<T>;
+
+        fn new(t: T) -> Self {
+            Rc::new(t)
+        }
+
+        fn downgrade(self) -> (Rc<T>, rc::Weak<T>) {
+            let weak = Rc::downgrade(&self);
+            (self, weak)
+        }
+    }
+
+    impl<T> sealed::RefCountedSeal for Arc<T> {}
+    impl<T> RefCounted<Atomic, T> for Arc<T>{
+        type WeakRefCounted = sync::Weak<T>;
+
+        fn new(t: T) -> Self {
+            Arc::new(t)
+        }
+
+        fn downgrade(self) -> (Arc<T>, sync::Weak<T>) {
+            let weak = Arc::downgrade(&self);
+            (self, weak)
+        }
+    }
+
+    /// A batch accessor.
+    ///
+    /// `BatchRef<M, C>` provides shared access to a Batch of column type `C`,
+    /// allocated in the heap.
+    /// When the last `BatchRef` pointer to a given batch is destroyed,
+    /// the batch stored in that allocation is also dropped.
+    pub trait BatchRef<C: BatchColumns>: Deref<Target = BatchCore<Self::ConcurrencyMode, C>> + sealed::BatchRefSeal {
+        /// The [`ConcurrencyMode`] type associated with the `BatchRef`.
+        type ConcurrencyMode: ConcurrencyMode;
+
+        /// The [`StoredBatchRef`] type associated with the `BatchRef's` [`Batch`](crate::record::batch).
+        type StoredBatchRef: StoredBatchRef<C>;
+
+        /// Returns an owned Batch pointer to the same [`Batch`](crate::record::batch).
+        fn into_stored(self) -> Self::StoredBatchRef;
+    }
+
+    /// todo
+    pub trait ErrorRef: Deref<Target = BatchError> + sealed::ErrorRefSeal{}
+
+    /// A local batch accessor.
+    ///
+    /// `LocalAccess<M, C>` provides thread-local access to a Batch of column type `C`,
+    /// allocated in the heap.
+    pub trait InitialBatchRef<C: BatchColumns>: BatchRef<C> {
+        /// todo
+        type Input;
+
+        /// todo
+        type ErrorRef: ErrorRef;
+
+        /// todo
+        fn new (input: Self::Input) -> Result<Self, Self::ErrorRef> where Self: Sized;
+    }
+
+    /// An owned batch pointer.
+    ///
+    /// `StoredBatchRef<M, C>` provides shared ownership to a Batch of column type `C`,
+    /// allocated in the heap.
+    ///
+    /// A `StoredBatchRef` is sendable in multithreaded context, aka M = Atomic.
+    pub trait StoredBatchRef<C: BatchColumns>: BatchRef<C> {}
+
+    /// todo
+    #[must_use]
+    #[repr(transparent)]
+    pub struct RcErrorRef<C: BatchColumns>(
+        Rc<BatchResult<Local, C>>,
+    );
+
+    impl<C: BatchColumns> RcErrorRef<C> {
+        /// todo
+        pub fn new(input: Rc<BatchResult<Local, C>>) -> Result<Self, Rc<BatchResult<Local, C>>> {
+            match input.deref() {
+                Err(_) => Ok(Self(input)),
+                Ok(_) => Err(input),
+            }
+        }
+    }
+
+    impl<C: BatchColumns> Deref for RcErrorRef<C> {
+        type Target = BatchError;
+
+        fn deref(&self) -> &BatchError {
+            // Safety:
+            // The Result is validated to be Err during
+            // initialization and cannot be modified.
+            unsafe { self.0.deref().as_ref().unwrap_err_unchecked() }
+        }
+    }
+
+    impl<C: BatchColumns> sealed::ErrorRefSeal for RcErrorRef<C> {}
+
+    impl<C: BatchColumns> ErrorRef for RcErrorRef<C> {}
+
+    /// todo
+    #[must_use]
+    #[repr(transparent)]
+    pub struct RcBatchRef<C: BatchColumns>(
+        Rc<BatchResult<Local, C>>,
+    );
+
+    impl<C: BatchColumns> Deref for RcBatchRef<C> {
+        type Target = BatchCore<Local, C>;
+
+        fn deref(&self) -> &BatchCore<Local, C> {
+            // Safety:
+            // The Result is validated to be Ok during
+            // initialization and cannot be modified.
+            unsafe { self.0.deref().as_ref().unwrap_unchecked() }
+        }
+    }
+
+    impl<C: BatchColumns> sealed::BatchRefSeal for RcBatchRef<C> {}
+
+    impl<C: BatchColumns> BatchRef<C> for RcBatchRef<C> {
+        type ConcurrencyMode = Local;
+
+        type StoredBatchRef = Self;
+
+        fn into_stored(self) -> Self {
+            self
+        }
+    }
+
+    impl<C: BatchColumns> StoredBatchRef<C> for RcBatchRef<C> {}
+
+    impl<C: BatchColumns> InitialBatchRef<C> for RcBatchRef<C> {
+        type Input = Rc<BatchResult<Local, C>>;
+
+        type ErrorRef = RcErrorRef<C>;
+
+        fn new(input: Rc<BatchResult<Local, C>>) -> Result<Self, RcErrorRef<C>> {
+            match input.deref() {
+                Ok(_) => Ok(Self(input)),
+                Err(_) => {
+                    match RcErrorRef::new(input) {
+                        Ok(rc_error_rf) => Err(rc_error_rf),
+                        Err(_) => panic!("RcErrorRef failed to maintain invariant, failed to initialize on input Err(_)"),
+                    }
+                },
+            }
+        }
+    }
+
+    /// todo
+    #[must_use]
+    #[repr(transparent)]
+    pub struct GuardErrorRef<C: BatchColumns>(
+        Guard<Option<Arc<BatchResult<Atomic, C>>>>,
+    );
+
+    impl<C: BatchColumns> GuardErrorRef<C> {
+        /// todo
+        pub fn new(input: Guard<Option<Arc<BatchResult<Atomic, C>>>>) -> Option<Result<Self, Guard<Option<Arc<BatchResult<Atomic, C>>>>>> {
+            match input.as_ref()?.as_ref() {
+                Err(_) => {Some(Ok(Self(input)))},
+                Ok(_) => Some(Err(input)),
+            }
+        }
+    }
+
+    impl<C: BatchColumns> Deref for GuardErrorRef<C> {
+        type Target = BatchError;
+
+        fn deref(&self) -> &BatchError {
+            // Safety:
+            // The Result is validated to be Err during
+            // initialization and cannot be modified.
+            unsafe { self.0.as_ref().unwrap_unchecked().as_ref().as_ref().unwrap_err_unchecked() }
+        }
+    }
+
+    impl<C: BatchColumns> sealed::ErrorRefSeal for GuardErrorRef<C> {}
+
+    impl<C: BatchColumns> ErrorRef for GuardErrorRef<C> {}
+
+    /// A temporary, thread-safe local view of a [`Batch`](crate::record::batch).
+    ///
+    /// `ArcGuard` wraps an [`arc_swap`](arc_swap)::[`Guard`].
     /// It dereferences directly to the underlying `Batch` in the `Option<Arc<Batch>>`,
     /// providing a guaranteed [`Some`] variant for read operations.
     ///
@@ -57,276 +297,339 @@ mod internal {
     ///
     /// Functions and trait implementations on this type will panic if the underlying
     /// pointer unexpectedly evaluates to [`None`].
-    pub struct ArcGuard<B: Batch>(Guard<Option<Arc<B>>>);
+    #[must_use]
+    #[repr(transparent)]
+    pub struct GuardBatchRef<C: BatchColumns>(
+        Guard<Option<Arc<BatchResult<Atomic, C>>>>,
+    );
 
-    impl<B: Batch> ArcGuard<B> {
-        /// Creates a new guarded view.
-        ///
-        /// # Panics
-        ///
-        /// Panics if the provided guard contains [`None`].
-        pub fn new(guard: Guard<Option<Arc<B>>>) -> Self {
-            match &*guard {
-                Some(_) => ArcGuard(guard),
-                None => panic!("Invariant broken: Guard was None!"),
-            }
+    impl<C: BatchColumns> Deref for GuardBatchRef<C> {
+        type Target = BatchCore<Atomic, C>;
+
+        fn deref(&self) -> &BatchCore<Atomic, C> {
+            // Safety:
+            // The Result is validated to be Some(Ok) during
+            // initialization and cannot be modified.
+            unsafe { self.0.as_ref().unwrap_unchecked().as_ref().as_ref().unwrap_unchecked() }
         }
+    }
 
-        /// Converts the leased guard into an owned reference-counted pointer.
-        ///
-        /// # Panics
-        ///
-        /// Panics if the underlying guard contains [`None`].
-        pub fn to_owned(self) -> Arc<B> {
-            match Guard::into_inner(self.0) {
-                Some(arc) => arc,
-                None => panic!("Invariant broken: Guard was None!"),
+    impl<C: BatchColumns> sealed::BatchRefSeal for GuardBatchRef<C> {}
+
+    impl<C: BatchColumns> BatchRef<C> for GuardBatchRef<C> {
+        type ConcurrencyMode = Atomic;
+
+        type StoredBatchRef = ArcBatchRef<C>;
+
+        fn into_stored(self) -> ArcBatchRef<C> {
+            // Safety:
+            // The Result is validated to be Some(Ok) during
+            // initialization and cannot be modified.
+            unsafe {
+                let inner_arc = Guard::into_inner(self.0).unwrap_unchecked();
+                ArcBatchRef::new_unchecked(inner_arc)
             }
         }
     }
 
-    impl<B: Batch> Deref for ArcGuard<B> {
-        type Target = B;
+    impl<C: BatchColumns> InitialBatchRef<C> for GuardBatchRef<C> {
+        type Input = Guard<Option<Arc<BatchResult<Atomic, C>>>>;
 
-        fn deref(&self) -> &B {
-            match &*self.0 {
-                Some(arc) => arc,
-                None => panic!("Invariant broken: Guard was None!"),
+        type ErrorRef = GuardErrorRef<C>;
+
+        fn new<'a>(input: Guard<Option<Arc<BatchResult<Atomic, C>>>>) -> Result<Self, GuardErrorRef<C>> {
+            match input.as_ref() {
+                Some(result) => match result.as_ref() {
+                    Ok(_)=> Ok(Self(input)),
+                    Err(_) => match GuardErrorRef::new(input) {
+                        Some(result) => match result {
+                            Ok(guard_error_ref) => Err(guard_error_ref),
+                            Err(_) => panic!("GuardErrorRef failed to maintain invariant, failed to initialize on input Err(_) "),
+                        },
+                        None => panic!("GuardErrorRef failed to maintain invariant, failed to initialize on input Some(_) "),
+                    },
+                },
+                None => panic!("GuardBatchRef invariant violated: Guard was None "),
             }
         }
     }
 
-    impl<B: Batch> sealed::SharedSeal for ArcGuard<B> {}
+    /// todo
+    #[must_use]
+    #[repr(transparent)]
+    pub struct ArcBatchRef<C: BatchColumns>(
+        Arc<BatchResult<Atomic, C>>,
+    );
 
-    impl<B: Batch> SharedAccess<Atomic, B> for ArcGuard<B> {}
+    impl<C: BatchColumns> ArcBatchRef<C> {
+        /// todo
+        pub unsafe fn new_unchecked(input: Arc<BatchResult<Atomic, C>>) -> Self {
+            Self(input)
+        }
+    }
 
-    /// A trait used to restrict generic parameters and types to proper views
-    /// of [`batches`](Batch). It is implemented for the [`LocalBatchHandle`],
-    /// the [`AtomicBatchHandle`], and the [`LeasedBatchRef`].
-    pub trait BatchAccess: sealed::BatchAccessSeal {
-        /// The [`ConcurrencyMode`] type associated with the `BatchAccess`.
+    impl<C: BatchColumns> Deref for ArcBatchRef<C> {
+        type Target = BatchCore<Atomic, C>;
+
+        fn deref(&self) -> &BatchCore<Atomic, C> {
+            // Safety:
+            // The Result is guarantied to be Ok by the
+            // initialization and cannot be modified.
+            unsafe { self.0.deref().as_ref().unwrap_unchecked() }
+        }
+    }
+
+    impl<C: BatchColumns> sealed::BatchRefSeal for ArcBatchRef<C> {}
+
+    impl<C: BatchColumns> BatchRef<C> for ArcBatchRef<C> {
+        type ConcurrencyMode = Atomic;
+
+        type StoredBatchRef = Self;
+
+        fn into_stored(self) -> Self {
+            self
+        }
+    }
+
+    impl<C: BatchColumns> StoredBatchRef<C> for ArcBatchRef<C> {}
+
+    pub struct Pod5Context<M: ConcurrencyMode> {
+        batch_registry: BatchRegistry<M>,
+        signal_decoder: SignalDecoder<M>,
+    }
+
+    impl<M: ConcurrencyMode> Pod5Context<M> {
+        fn new(
+            batch_registry: BatchRegistry<M>,
+            signal_decoder: SignalDecoder<M>,
+        ) -> Self {
+            Self {
+                batch_registry,
+                signal_decoder,
+            }
+        }
+        pub fn batch_registry(&self) -> &BatchRegistry<M> {
+            &self.batch_registry
+        }
+        pub fn signal_decoder(&self) -> &SignalDecoder<M> {
+            &self.signal_decoder
+        }
+    }
+
+    /// todo
+    pub trait Pod5ContextHandle<M: ConcurrencyMode>: Clone + Deref<Target = Pod5Context<M>> {
+        /// todo
+        fn new(inner: M::RefCounted<Pod5Context<M>>) -> Self;
+
+        /// todo
+        fn into_stored(self) -> StoredPod5ContextHandle<M>;
+    }
+
+    /// todo
+    pub struct InitialPod5ContextHandle<M: ConcurrencyMode> (Rc<M::RefCounted<Pod5Context<M>>>);
+
+    impl<M: ConcurrencyMode> Clone for InitialPod5ContextHandle<M> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
+
+    impl<M: ConcurrencyMode> Deref for InitialPod5ContextHandle<M> {
+        type Target = Pod5Context<M>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl<M: ConcurrencyMode> Pod5ContextHandle<M> for InitialPod5ContextHandle<M> {
+        fn new(inner: M::RefCounted<Pod5Context<M>>) -> Self {
+            Self(Rc::new(inner))
+        }
+
+        fn into_stored(self) -> StoredPod5ContextHandle<M> {
+            let inner = self.0.as_ref();
+            StoredPod5ContextHandle(inner.clone())
+        }
+    }
+
+    /// todo
+    pub struct StoredPod5ContextHandle<M: ConcurrencyMode> (M::RefCounted<Pod5Context<M>>);
+
+    impl<M: ConcurrencyMode> Clone for StoredPod5ContextHandle<M> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
+
+    impl<M: ConcurrencyMode> Deref for StoredPod5ContextHandle<M> {
+        type Target = Pod5Context<M>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl<M: ConcurrencyMode> Pod5ContextHandle<M> for StoredPod5ContextHandle<M> {
+        fn new(inner: M::RefCounted<Pod5Context<M>>) -> Self {
+            Self(inner)
+        }
+
+        fn into_stored(self) -> StoredPod5ContextHandle<M> {
+            self
+        }
+    }
+
+    /// todo
+    pub trait ReferenceModel {
+        /// todo
         type ConcurrencyMode: ConcurrencyMode;
 
-        /// The specific [`SharedAccess`] type associated with the `BatchAccess`.
-        type SharedAccess<B: Batch>: SharedAccess<Self::ConcurrencyMode, B>;
+        /// todo
+        type Pod5ContextHandle: Pod5ContextHandle<Self::ConcurrencyMode>;
 
-        /// The [`BatchHandle`] associated with the `BatchAccess`.
-        type BatchHandle<B: Batch>: BatchHandle<SharedAccess<B>: RefCounted<Self::ConcurrencyMode, B>, ConcurrencyMode = Self::ConcurrencyMode>;
-
-        /// Converts the [`SharedAccess`] type into the [`RefCounted`] type of
-        /// the associated [`BatchHandle`].
-        fn upgrade<B: Batch>(
-            shared_access: Self::SharedAccess<B>,
-        ) -> <Self::BatchHandle<B> as BatchAccess>::SharedAccess<B>;
+        /// todo
+        type BatchRef<C: BatchColumns>: BatchRef<C, ConcurrencyMode = Self::ConcurrencyMode>;
+        /// todo
+        type StoredReferenceModel<C: BatchColumns>: StoredReferenceModel<
+            C,
+            ConcurrencyMode = Self::ConcurrencyMode,
+            Pod5ContextHandle = StoredPod5ContextHandle<Self::ConcurrencyMode>,
+            BatchRef<C> = <Self::BatchRef<C> as BatchRef<C>>::StoredBatchRef,
+        >;
     }
 
-    /// A trait used to restrict generic parameters and types to initial, thread-bound
-    /// [`BatchAccesses`](BatchAccess) before upgrading.
-    ///
-    /// It is implemented for the [`LocalBatchHandle`] and the [`LeasedBatchRef`].
-    pub trait LocalAccess: BatchAccess {}
+    /// todo
+    pub trait InitialReferenceModel<C: BatchColumns>: ReferenceModel<BatchRef<C>: InitialBatchRef<C>> {}
 
-    /// A trait used to restrict generic parameters and types to upgraded,
-    /// owned [`BatchAccesses`](BatchAccess).
-    ///
-    /// It is implemented for the [`LocalBatchHandle`] and the [`AtomicBatchHandle`]
-    pub trait BatchHandle: BatchAccess {}
+    /// todo
+    pub trait StoredReferenceModel<C: BatchColumns>: ReferenceModel<BatchRef<C>: StoredBatchRef<C>, StoredReferenceModel<C> = Self> {}
 
-    /// A marker configuration for single-threaded, owned batch access.
-    /// It lets records use [`Rc`] pointers to share batches.
-    ///
-    /// It implements [`LocalAccess`] and [`BatchHandle`], meaning it represents both the
-    /// initial access type and its own upgraded handle.
-    pub struct LocalBatchHandle;
+    /// todo
+    pub struct RcModel;
 
-    impl sealed::BatchAccessSeal for LocalBatchHandle {}
-
-    impl BatchAccess for LocalBatchHandle {
+    impl ReferenceModel for RcModel {
         type ConcurrencyMode = Local;
-        type SharedAccess<B: Batch> = Rc<B>;
-        type BatchHandle<B: Batch> = Self;
-        fn upgrade<B: Batch>(shared_access: Rc<B>) -> Rc<B> {
-            shared_access
-        }
+        type Pod5ContextHandle = StoredPod5ContextHandle<Local>;
+        type BatchRef<C: BatchColumns> = RcBatchRef<C>;
+        type StoredReferenceModel<C: BatchColumns> = Self;
     }
 
-    impl BatchHandle for LocalBatchHandle {}
+    impl<C: BatchColumns> InitialReferenceModel<C> for RcModel {}
 
-    impl LocalAccess for LocalBatchHandle {}
+    impl<C: BatchColumns> StoredReferenceModel<C> for RcModel {}
 
-    /// A marker configuration for thread-safe, owned batch access.
-    /// It lets records use [`Arc`] pointers to share batches.
-    ///
-    /// It implements [`BatchHandle`], serving as the target upgrade path for temporary
-    /// or leased access types like [`LeasedBatchRef`].
-    pub struct AtomicBatchHandle;
+    /// todo
+    pub struct GuardModel;
 
-    impl sealed::BatchAccessSeal for AtomicBatchHandle {}
-
-    impl BatchAccess for AtomicBatchHandle {
+    impl ReferenceModel for GuardModel {
         type ConcurrencyMode = Atomic;
-        type SharedAccess<B: Batch> = Arc<B>;
-        type BatchHandle<B: Batch> = Self;
-
-        fn upgrade<B: Batch>(shared_access: Arc<B>) -> Arc<B> {
-            shared_access
-        }
+        type Pod5ContextHandle = InitialPod5ContextHandle<Atomic>;
+        type BatchRef<C: BatchColumns> = GuardBatchRef<C>;
+        type StoredReferenceModel<C: BatchColumns> = ArcModel;
     }
 
-    impl BatchHandle for AtomicBatchHandle {}
+    impl<C: BatchColumns> InitialReferenceModel<C> for GuardModel {}
 
-    /// A marker configuration for thread-safe, leased batch access.
-    /// It lets records use lock-free read [`Guards`](ArcGuard) to share batches.
-    ///
-    /// It implements [`LocalAccess`] but *not* [`BatchHandle`], forcing an explicit
-    /// [`upgrade`](BatchAccess::upgrade) path to an [`Arc`] if ownership needs to be extended.
-    pub struct LeasedBatchRef;
+    /// todo
+    pub struct ArcModel;
 
-    impl sealed::BatchAccessSeal for LeasedBatchRef {}
-
-    impl BatchAccess for LeasedBatchRef {
+    impl ReferenceModel for ArcModel {
         type ConcurrencyMode = Atomic;
-        type SharedAccess<B: Batch> = ArcGuard<B>;
-        type BatchHandle<B: Batch> = AtomicBatchHandle;
-
-        fn upgrade<B: Batch>(shared_access: ArcGuard<B>) -> Arc<B> {
-            shared_access.to_owned()
-        }
+        type Pod5ContextHandle = StoredPod5ContextHandle<Atomic>;
+        type BatchRef<C: BatchColumns> = ArcBatchRef<C>;
+        type StoredReferenceModel<C: BatchColumns> = Self;
     }
 
-    impl LocalAccess for LeasedBatchRef {}
+    impl<C: BatchColumns> StoredReferenceModel<C> for ArcModel {}
 
+    /// todo
+    pub trait ConcurrencyMode: sealed::ConcurrencySeal + Sized + 'static {
+        /// todo
+        type InitialReferenceModel<C: BatchColumns>: InitialReferenceModel<C, ConcurrencyMode = Self>;
 
-    #[derive(Debug)]
-    /// Error raised when a HintThreshold is badly instantiated.
-    pub enum HintThresholdError {
-        /// The provided value exceeds the maximum allowable threshold.
-        OverFlow,
+        /// todo
+        type RefCounted<T>: RefCounted<Self, T, WeakRefCounted = Self::WeakRefCounted<T>> + Deref<Target = T>;
 
-        /// The provided value falls below the minimum allowable threshold.
-        UnderFlow,
+        /// todo
+        type WeakRefCounted<T>: WeakRefCounted<Self, T, RefCounted = Self::RefCounted<T>>;
+
+        /// todo
+        type Tracker<C: BatchColumns>: BatchRefTracker<Self, C>;
     }
 
-    impl Display for HintThresholdError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            match self {
-                Self::OverFlow => write!(f, "HintThreshold overflow: attempted new with threshold above max"),
-                Self::UnderFlow => write!(f, "HintThreshold underflow: attempted new with threshold under min"),
-            }
-        }
-    }
+    pub type BatchRefOf<M: ConcurrencyMode, C: BatchColumns> = <M::InitialReferenceModel<C> as ReferenceModel>::BatchRef<C>;
+    pub type ErrorRefOf<M: ConcurrencyMode, C: BatchColumns> = <<M::InitialReferenceModel<C> as ReferenceModel>::BatchRef<C> as InitialBatchRef<C>>::ErrorRef;
 
-    impl Error for HintThresholdError {}
-
-    /// Represents the number of remaining uses at which point a hint
-    /// should be given to start loading the next batch.
-    /// The [`Capacity`](crate::file::manager::Capacity) of trackers
-    /// is compared against it by the internal
-    /// [`BatchManager`](crate::file::manager::BatchManager).
-    #[repr(transparent)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct HintThreshold(u64);
-    impl HintThreshold {
-        /// The largest threshold count representable by this type.
-        pub const MAX: u64 = Capacity::MAX;
-
-        /// The smallest threshold count representable by this type.
-        pub const MIN: u64 = Capacity::MIN;
-
-        /// Returns `Ok(Capacity)`, or
-        /// [`Err(HintThresholdError)`](HintThresholdError)
-        /// if `threshold` exceeds [`MAX`](Capacity::MAX) or is `0`.
-        pub fn new(threshold: u64) -> Result<Self, HintThresholdError> {
-            if threshold > Self::MAX {
-                return Err(HintThresholdError::OverFlow)
-            }
-            if threshold < Self::MIN {
-                return Err(HintThresholdError::UnderFlow)
-            }
-            Ok(Self(threshold))
-        }
-    }
-
-    impl From<HintThreshold> for u64 {
-        fn from(threshold: HintThreshold) -> Self {
-            threshold.0
-        }
-    }
-
-    impl From<HintThreshold> for Capacity {
-        fn from(threshold: HintThreshold) -> Capacity {
-            // HintThreshold enforces identical bounds to Capacity at construction.
-            Capacity::new(threshold.into()).unwrap()
-        }
-    }
-
-    impl TryFrom<u64> for HintThreshold {
-        type Error = HintThresholdError;
-        fn try_from(threshold: u64) -> Result<Self, Self::Error> {
-            HintThreshold::new(threshold)
-        }
-    }
-
-    pub trait ConcurrencyMode: sealed::ConcurrencySeal + Sized {
-
-        type LocalAccess: LocalAccess<ConcurrencyMode = Self>;
-        type RefCounted<T>: RefCounted<Self, T>;
-        type Tracker<B: Batch>: BatchUsageTracker<Self, B>;
-    }
-
+    /// todo
     pub struct Local;
 
     impl sealed::ConcurrencySeal for Local {}
 
     impl ConcurrencyMode for Local {
-        type LocalAccess = LocalBatchHandle;
+        type InitialReferenceModel<C: BatchColumns> = RcModel;
         type RefCounted<T> = Rc<T>;
-        type Tracker<B: Batch> = RcBatchUsageTracker<B>;
+        type WeakRefCounted<T> = rc::Weak<T>;
+        type Tracker<C: BatchColumns> = RcBatchRefTracker<C>;
     }
 
+    /// todo
     pub struct Atomic;
 
     impl sealed::ConcurrencySeal for Atomic {}
 
     impl ConcurrencyMode for Atomic {
-        type LocalAccess = LeasedBatchRef;
+        type InitialReferenceModel<C: BatchColumns> = GuardModel;
         type RefCounted<T> = Arc<T>;
-        type Tracker<B: Batch> = ArcBatchUsageTracker<B>;
+        type WeakRefCounted<T> = sync::Weak<T>;
+        type Tracker<C: BatchColumns> = ArcBatchRefTracker<C>;
     }
-
-
-
 }
 
+use std::error::Error;
+use std::fmt;
+use std::fmt::{write, Display, Formatter};
+use std::mem::MaybeUninit;
 use std::ops::Add;
 #[cfg(feature = "backend")]
 pub use self::internal::{
-    ConcurrencyMode,
-    Local,
+    ArcBatchRef,
     Atomic,
-    BatchAccess,
-    BatchHandle,
-    LocalAccess,
-    LocalBatchHandle,
-    AtomicBatchHandle,
-    LeasedBatchRef,
-    ArcGuard,
+    BatchRef,
+    ConcurrencyMode,
+    RcBatchRef,
+    RcErrorRef,
+    GuardBatchRef,
+    GuardErrorRef,
+    InitialBatchRef,
+    Local,
+    ReferenceModel,
+    BatchRefOf,
+    ErrorRefOf,
 };
 
 #[cfg(not(feature = "backend"))]
 pub(crate) use self::internal::{
-    ConcurrencyMode,
-    Local,
+    ArcBatchRef,
     Atomic,
-    BatchAccess,
-    BatchHandle,
-    LocalAccess,
-    LocalBatchHandle,
-    AtomicBatchHandle,
-    LeasedBatchRef,
-    ArcGuard,
+    BatchRef,
+    ConcurrencyMode,
+    RcBatchRef,
+    RcErrorRef,
+    GuardBatchRef,
+    GuardErrorRef,
+    InitialBatchRef,
+    Local,
+    ReferenceModel,
+    RcModel,
+    ArcModel,
+    GuardModel,
+    BatchRefOf,
+    ErrorRefOf,
+    Pod5ContextHandle,
+    RefCounted,
+    Pod5Context,
 };
-
 
 
 #[must_use]
@@ -348,13 +651,21 @@ impl PageOffset {
     }
 
     /// Returns the underlying byte offset.
-    pub fn into_inner(&self) -> usize {
+    pub fn as_inner(&self) -> usize {
         self.0
     }
 }
 
 /// Failed to determine the operating system's memory page size.
+#[derive(Debug)]
 pub struct PageSizeError(String);
+
+impl Display for PageSizeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl Error for PageSizeError {}
 
 #[must_use]
 #[repr(transparent)]
@@ -383,10 +694,7 @@ impl PageSize {
             page_size.is_power_of_two(),
             "page size ({page_size}) must be a power of two"
         );
-        assert!(
-            page_size != 0,
-            "page size ({page_size}) must be a non-zero value"
-        );
+        assert_ne!(page_size, 0, "page size ({page_size}) must be a non-zero value");
         Self(page_size)
     }
 
@@ -413,7 +721,7 @@ impl PageSize {
     ///
     /// The total range covered by the pages must not overflow usize.
     pub fn iter_pages(&self, start: PageOffset, page_count: usize) -> (impl Iterator<Item = PageOffset>, PageOffset) {
-        let start = start.into_inner();
+        let start = start.as_inner();
         let page_size = self.0;
         let offset = page_count.checked_mul(page_size)
             .expect(&format!("page offset overflowed ({} * {})", page_count, page_size));
@@ -442,7 +750,7 @@ impl PageSize {
             .expect(&format!("page range overflowed ({} + {})", start, length));
         let start = self.align_down(start);
         let end = self.align_up(raw_end);
-        let span = end.into_inner() - start.into_inner();
+        let span = end.as_inner() - start.as_inner();
         span >> self.0.trailing_zeros()
     }
 
@@ -450,15 +758,15 @@ impl PageSize {
     ///
     /// Unlike [`touched_page_count`], a trailing partially covered page is excluded,
     /// since reclaiming it could discard bytes beyond the requested range.
-    pub fn reclaimable_pages_count(&self, start: usize, length: usize) -> usize {
-        if length == 0 {
+    pub fn reclaimable_pages_count(&self, byte_range: ByteRange) -> usize {
+        if byte_range.length() == 0 {
             return 0;
         }
-        let raw_end = start.checked_add(length)
-            .expect(&format!("page range overflowed ({} + {})", start, length));
-        let start = self.align_down(start);
+        let raw_end = byte_range.start().checked_add(byte_range.length())
+            .expect(&format!("page range overflowed ({} + {})", byte_range.start(), byte_range.length()));
+        let start = self.align_down(byte_range.start());
         let end = self.align_down(raw_end);
-        let span = end.into_inner() - start.into_inner();
+        let span = end.as_inner() - start.as_inner();
         span >> self.0.trailing_zeros()
     }
 
@@ -503,6 +811,9 @@ use windows_sys::Win32::System::SystemInformation::{
     GetSystemInfo,
     SYSTEM_INFO,
 };
+use crate::file::distribution::Capacity;
+use crate::io::mmap::ByteRange;
+use crate::record::batch::BatchIndex;
 
 #[cfg(windows)]
 impl PageSize {
@@ -523,8 +834,9 @@ impl PageSize {
             Err(PageSizeError("Page size found is invalid (0)".to_owned()))
         } else if !(page_size).is_power_of_two() {
             Err(PageSizeError("Page size found is invalid (not 2^n)".to_owned()))
+        } else {
+            Ok(Self(page_size))
         }
-        Ok(Self(page_size))
     }
 }
 
@@ -536,6 +848,121 @@ impl PageSize {
     pub fn initialize() -> Result<Self, PageSizeError> {
         // On non-Unix/Windows systems, the unsafe custom page size **must** be used.
         Err(PageSizeError("Page size cannot be found, must use custom size.".to_owned()))
+    }
+}
+
+/// Error raised when a HintThreshold is badly instantiated.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum HintThresholdError {
+    /// The provided value exceeds the maximum allowable threshold.
+    OverFlow,
+
+    /// The provided value falls below the minimum allowable threshold.
+    UnderFlow,
+}
+
+impl Display for HintThresholdError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OverFlow => write!(f, "HintThreshold overflow: attempted new with threshold above max"),
+            Self::UnderFlow => write!(f, "HintThreshold underflow: attempted new with threshold under min"),
+        }
+    }
+}
+
+impl Error for HintThresholdError {}
+
+/// Represents the number of remaining uses at which point a hint
+/// should be given to start loading the next batch.
+/// The [`Capacity`](Capacity) of trackers
+/// is compared against it by the internal
+/// [`BatchManager`](crate::file::trackin::BatchManager).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HintThreshold(u64);
+impl HintThreshold {
+    /// The largest threshold count representable by this type.
+    pub const MAX: u64 = Capacity::MAX;
+
+    /// The smallest threshold count representable by this type.
+    pub const MIN: u64 = Capacity::MIN;
+
+    /// Returns `Ok(Capacity)`, or
+    /// [`Err(HintThresholdError)`](HintThresholdError)
+    /// if `threshold` exceeds [`MAX`](Capacity::MAX) or is `0`.
+    pub fn new(threshold: u64) -> Result<Self, HintThresholdError> {
+        if threshold > Self::MAX {
+            return Err(HintThresholdError::OverFlow)
+        }
+        if threshold < Self::MIN {
+            return Err(HintThresholdError::UnderFlow)
+        }
+        Ok(Self(threshold))
+    }
+
+    /// Returns `true` if the threshold has been hit.
+    pub fn hit_by(&self, capacity: Capacity) -> bool {
+        self.0 == capacity.count()
+    }
+}
+
+impl From<HintThreshold> for u64 {
+    fn from(threshold: HintThreshold) -> Self {
+        threshold.0
+    }
+}
+
+impl From<HintThreshold> for Capacity {
+    fn from(threshold: HintThreshold) -> Capacity {
+        // HintThreshold enforces identical bounds to Capacity at construction.
+        Capacity::new(threshold.into()).unwrap()
+    }
+}
+
+impl TryFrom<u64> for HintThreshold {
+    type Error = HintThresholdError;
+    fn try_from(threshold: u64) -> Result<Self, Self::Error> {
+        HintThreshold::new(threshold)
+    }
+}
+
+/// todo
+#[derive(Debug, Copy, Clone)]
+pub struct HintLookaheadError;
+
+impl Display for HintLookaheadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Hint lookahead must be non-zero")
+    }
+}
+
+impl Error for HintLookaheadError {}
+
+
+/// todo
+#[derive(Copy, Clone)]
+pub struct HintLookahead(u32);
+
+impl HintLookahead {
+    /// todo
+    pub fn new(u: u32) -> Result<Self, HintLookaheadError> {
+        if u == 0 {
+            Err(HintLookaheadError)
+        } else {
+            Ok(Self(u))
+        }
+    }
+
+    pub fn initial_batch_indexes(&self) -> Vec<BatchIndex> {
+        (0..self.0).map(|i| i.into()).collect()
+    }
+
+    /// todo
+    pub fn next_batch_index(&self, batch_index: BatchIndex) -> BatchIndex {
+        // Panic behavior used specifically because other limits, like
+        // FlatBuffer's 2 GB serialized buffer limit, prevent reaching this
+        // point through correct behavior.
+        BatchIndex::new(batch_index.value().strict_add(self.0))
     }
 }
 

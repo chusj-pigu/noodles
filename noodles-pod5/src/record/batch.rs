@@ -1,21 +1,56 @@
-// standard
+//! A `Batch` is the fundamental unit of work for processing POD5 data.
+//!
+//! Each batch owns a columnar Arrow [`RecordBatch`] together with typed column
+//! wrappers, allowing records to be accessed without repeatedly downcasting
+//! Arrow arrays.
+//!
+//! Individual records are produced on demand by indexing into the batch rather
+//! than being stored directly.
+//!
+//! Although `Batch` is part of the public API, it primarily exists to support
+//! higher-level iteration and record access.
+//! todo: review batch module doc
 
-// local
-use crate::{
-    file::{FileRowIndex, RowCount},
-    io::reader::ConcurrencyMode
+// standard
+use std::{
+    error::Error,
+    fmt::{
+        self,
+        Debug,
+        Display,
+        Formatter
+    },
+    ops::Deref
 };
 // third party
 use arrow::array::RecordBatch;
+// local
+use crate::{
+    io::{
+        reader::ConcurrencyMode,
+        ipc_reader::IPCReaderError,
+        mmap::{
+            ByteRange,
+            Mmap,
+        },
+    },
+    record::batch::columns::{
+        BatchColumns,
+    },
+    file::{
+        FileRowIndex,
+        schema::SchemaError,
+    },
+};
 
 mod run_info;
 mod read;
 mod signal;
 mod batch_index;
-pub mod arrays;
-pub mod types;
+pub mod columns;
 
 pub use self::{
+    batch_index::*,
     read::{
         ConcurrentReadBatch,
         ReadBatch,
@@ -28,103 +63,142 @@ pub use self::{
         ConcurrentSignalBatch,
         SignalBatch,
     },
-    batch_index::*,
 };
 
 
 pub(crate) mod internal {
-    pub mod backend {
-        pub use self::super::super::{
-            read::internal::*,
-            run_info::internal::*,
-            signal::internal::*,
-        };
-    }
+    pub use self::super::{
+        columns::*,
+        read::internal::*,
+        run_info::internal::*,
+        signal::internal::*,
+    };
 }
 
 #[cfg(feature = "backend")]
-pub use self::internal::backend;
+pub mod backend {
+    pub use self::internal::*;
+}
+
 
 mod sealed {
     pub trait Seal {}
 }
 
-/// The `Batch` is the fundamental unit of work for processing.
-/// It represents a sequential collection of [`Records`](crate::record::common::Record)
-/// grouped together to optimize throughput and memory usage during bulk operations.
-#[cfg_attr(feature = "backend", doc = "\n\nThis trait is sealed for [`RunInfoBatchCore`](backend::RunInfoBatchCore), [`ReadBatchCore`](backend::ReadBatchCore) and [`SignalBatchCore`](backend::SignalBatchCore).")]
-#[cfg_attr(not(feature = "backend"), doc = "\n\nThis trait is sealed for [`RunInfoBatch`]/[`ConcurrentRunInfoBatch`], [`ReadBatch`]/[`ConcurrentReadBatch`] and [`SignalBatch`]/[`ConcurrentSignalBatch`].")]
-pub trait Batch: sealed::Seal {
-    /// Returns a new `Batch`.
-    fn new(record_batch: RecordBatch, start_row: FileRowIndex, num_rows: RowCount) -> Self;
 
-    /// Returns the [`Arrow`](arrow) [`RecordBatch`] the `Batch` wraps around.
-    fn as_record_batch(&self) -> &RecordBatch;
+/// The result of initializing a [`Batch`](crate::record::batch).
+pub type BatchResult<M: ConcurrencyMode, C: BatchColumns> = Result<BatchCore<M,C>, BatchError>;
 
-    /// Returns `true` if the [`RowIndex`](FileRowIndex) is within this `Batch`.
-    fn contains(&self, global_row: FileRowIndex) -> Option<bool>;
+/// The shared implementation underlying all [`Batch`](crate::record::batch) types.
+///
+/// `BatchCore` owns the Arrow [`RecordBatch`] together with its typed column
+/// wrappers in the form of [`BatchColumns`], providing the storage from which
+/// batch-specific record types are produced without repeated Arrow downcasts.
+#[derive(Debug)]
+pub struct BatchCore<M: ConcurrencyMode, C: BatchColumns> {
+    /// The underlying columnar storage.
+    record: RecordBatch,
+
+    /// The typed column wrappers obtained by downcasting the Arrow arrays.
+    columns: C,
+
+    /// The information required when dropping a batch
+    drop_information: (
+        ByteRange,
+        M::RefCounted<Mmap>,
+    ),
 }
 
-impl<M: ConcurrencyMode> sealed::Seal for internal::backend::RunInfoBatchCore<M> {}
+impl<M: ConcurrencyMode, C: BatchColumns> BatchCore<M, C> {
+    /// Creates a `BatchCore` from an Arrow [`RecordBatch`].
+    pub(crate) fn new(record: RecordBatch, byte_range: ByteRange, mmap: M::RefCounted<Mmap>) -> BatchResult<M, C> {
+        let columns = C::new(&record)?;
+        Ok(Self {
+            record,
+            columns,
+            drop_information: (byte_range, mmap),
+        })
+    }
 
-impl<M: ConcurrencyMode> sealed::Seal for internal::backend::ReadBatchCore<M> {}
+    /// Returns a reference to the underlying arrow [`RecordBatch`].
+    pub fn as_record_batch(&self) -> &RecordBatch {
+        &self.record
+    }
+}
 
-impl<M: ConcurrencyMode> sealed::Seal for internal::backend::SignalBatchCore<M> {}
+impl<M: ConcurrencyMode, C: BatchColumns> Drop for BatchCore<M, C> {
+    fn drop(&mut self) {
+        let (range, mmap) = &self.drop_information;
+        mmap.dont_need(*range);
+    }
+}
 
+impl<M: ConcurrencyMode, C: BatchColumns> Deref for BatchCore<M, C> {
+    type Target = C;
+    fn deref(&self) -> &C {
+        &self.columns
+    }
+}
 
-/*
-columns requirement, X:for required, O for required but technically recoverable.
+/// The names of the tables of a pod5 file.
+#[derive(Debug)]
+pub enum TableName {
+    RunInfo,
+    Read,
+    Signal,
+}
 
-see: The list belows shows the columns which cannot be null, via X, but also shows the ones which are in theory recoverable with O.
+impl Display for TableName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RunInfo => f.write_str("run-info"),
+            Self::Read => f.write_str("read"),
+            Self::Signal => f.write_str("signal"),
+        }
+    }
+}
 
-Read columns
-[X]: read_id
-[O]: signal {via read_id filtration of signals (plus signal count can be used to validate after filtration search)}
-[X]: channel
-[X]: well
-[ ]: pore_type
-[X]: calibration_offset
-[X]: calibration_scale
-[X]: read_number
-[X]: start
-[ ]: median_before
-[ ]: tracked_scaling_scale
-[ ]: tracked_scaling_shift
-[ ]: predicted_scaling_scale
-[ ]: predicted_scaling_shift
-[ ]: num_reads_since_mux_change
-[ ]: time_since_mux_change
-[ ]: num_minknow_events
-[ ]: end_reason
-[ ]: end_reason_forced
-[X]: run_info
-[O]: num_samples  {via the sum of the signal sample counts}
-[ ]: open_pore_level
+#[derive(Debug)]
+/// Errors encountered while accessing batch data.
+pub enum BatchError {
+    /// todo
+    SchemaError(SchemaError),
 
-Run Info columns
-[X]: acquisition_id
-[X]: acquisition_start_time
-[O]: adc_max {recoverable via system_type, since hardcoded value}
-[O]: adc_min {recoverable via system_type, since hardcoded value}
-[ ]: context_tags
-[ ]: experiment_name
-[X]: flow_cell_id
-[X]: flow_cell_product_code
-[ ]: protocol_name
-[X]: protocol_run_id
-[X]: protocol_start_time
-[ ]: sample_id
-[X]: sample_rate
-[X]: sequencing_kit
-[X]: sequencer_position
-[ ]: sequencer_position_type
-[ ]: software
-[ ]: system_name
-[X]: system_type
-[ ]: tracking_id
+    /// The reader failed to decode the batch.
+    DecodingFailure(IPCReaderError),
 
-Signal columns
-[X]: read_id
-[X]: signal
-[O]: samples {via the length of the decompressed signal array(can be decompressed on a max-length array, aka 102400)}
-    */
+    /// todo
+    OutOfBounds(FileRowIndex, TableName),
+}
+
+impl Display for BatchError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SchemaError(_) => write!(f, "Schema error"),
+            Self::DecodingFailure(_) => write!(f, "Decoding error"),
+            Self::OutOfBounds(e, n) => write!(f, "Row index {} out of bounds for the {n} table", e.value()),
+        }
+    }
+}
+
+impl Error for BatchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SchemaError(e) => Some(e),
+            Self::DecodingFailure(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<IPCReaderError> for BatchError {
+    fn from(error: IPCReaderError) -> Self {
+        BatchError::DecodingFailure(error)
+    }
+}
+
+impl From<SchemaError> for BatchError {
+    fn from(error: SchemaError) -> Self {
+        BatchError::SchemaError(error)
+    }
+}

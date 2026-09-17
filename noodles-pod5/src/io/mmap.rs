@@ -31,9 +31,34 @@ use memmap2::{
 // local
 use crate::io::reader::{PageOffset, PageSize};
 
+/// todo
+#[derive(Debug, Copy, Clone)]
+pub struct ByteRange {
+    /// The `start` of the `ByteRange`.
+    start: usize,
+    /// The `length` of the `ByteRange`.
+    length: usize,
+}
+
+impl ByteRange {
+    /// Creates a new `ByteRange`.
+    pub fn new(start: usize, length: usize) -> Self {
+        Self { start, length }
+    }
+
+    /// Returns the `start` of the `ByteRange`.
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Returns the `length` of the `ByteRange`.
+    pub fn length(&self) -> usize {
+        self.length
+    }
+}
 
 /// The operations which can be requested from the worker
-enum Order {
+enum HintingOrder {
     /// Tells the worker to start prefaulting pages
     Prefault{
         /// The start of the range of pages to prefault.
@@ -47,7 +72,7 @@ enum Order {
 
 
 /// The receiver portion of the `Worker`, living on a separate thread.
-/// It prefaults pages following the [`Orders`](Order) of the [`WorkerHandle`].
+/// It prefaults pages following the [`Orders`](HintingOrder) of the [`WorkerHandle`].
 ///
 /// # Safety
 ///
@@ -80,23 +105,23 @@ impl Worker {
     }
 
     /// Returns a closure which calls prefaults with the `Worker` until a
-    /// [`Stop`](Order::Stop) [`Order`] is received, at which point the closure
+    /// [`Stop`](HintingOrder::Stop) [`HintingOrder`] is received, at which point the closure
     /// drops it.
     ///
     /// # Panics
     ///
     /// If the [`sender`](mpsc::Sender) the Worker is listening too is
     /// disconnect or dropped before the Worker receives the `Stop` order.
-    fn start(self, receiver: Receiver<Order>) -> impl FnOnce() + Send + 'static {
+    fn start(self, receiver: Receiver<HintingOrder>) -> impl FnOnce() + Send + 'static {
         move || {
             loop {
                 let order = receiver.recv()
                     .expect("worker sender disconnected out of order");
                 match order {
-                    Order::Prefault{start,page_count} => {
+                    HintingOrder::Prefault{start,page_count} => {
                         self.prefault(start, page_count);
                     }
-                    Order::Stop => {
+                    HintingOrder::Stop => {
                         break;
                     }
                 }
@@ -117,7 +142,7 @@ impl Worker {
             return;
         }
         let (page_offsets, end_offset) = self.page_size.iter_pages(start, page_count);
-        let end_offset = end_offset.into_inner();
+        let end_offset = end_offset.as_inner();
         if end_offset > self.max_offset {
             panic!("prefault offset {} exceeds maximum memory map offset {}", end_offset, self.max_offset)
         }
@@ -128,7 +153,7 @@ impl Worker {
             //   it is made from a mmap pointer and the offset.
             unsafe {
                 std::ptr::read_volatile(
-                    self.ptr.as_ptr().add(offset.into_inner())
+                    self.ptr.as_ptr().add(offset.as_inner())
                 );
             }
         }
@@ -143,7 +168,7 @@ impl Worker {
 /// The WorkerHandle must be dropped before the pointed mmap is dropped.
 struct WorkerHandle {
     /// The [`channel`](mpsc::channel) through which the `WorkerHandle` sends orders to the `Worker`.
-    sender: Sender<Order>,
+    sender: Sender<HintingOrder>,
     /// The [`handle`](JoinHandle) to the thread the `Worker` lives on.
     handle: Option<JoinHandle<()>>,
 }
@@ -153,7 +178,7 @@ impl WorkerHandle {
     /// returns a new `WorkerHandle`.
     fn new(mmap: &memmap2::Mmap, page_size: PageSize) -> Self {
         let worker = Worker::new(mmap, page_size);
-        let (sender, receiver) = mpsc::channel::<Order>();
+        let (sender, receiver) = mpsc::channel::<HintingOrder>();
         let handle = Some(spawn(worker.start(receiver)));
         Self {
             sender,
@@ -168,7 +193,7 @@ impl WorkerHandle {
     /// If the `sender` of the channel is missing or
     /// if the WorkerHandle's thread exited
     fn prefault(&self, start: PageOffset, page_count: usize) {
-        if let Err(_) = self.sender.send(Order::Prefault{start, page_count}) {
+        if let Err(_) = self.sender.send(HintingOrder::Prefault{start, page_count}) {
             panic!("internal invariant violated: worker thread terminated unexpectedly");
         }
     }
@@ -176,7 +201,7 @@ impl WorkerHandle {
 
 impl Drop for WorkerHandle {
     fn drop(&mut self) {
-        let _ = self.sender.send(Order::Stop);
+        let _ = self.sender.send(HintingOrder::Stop);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -273,19 +298,19 @@ impl Mmap {
     ///
     /// Panics if the requested range lies outside the memory map or if the
     /// range calculation overflows.
-    pub(crate) fn will_need(&self, offset: usize, length: usize) {
+    pub(crate) fn will_need(&self, byte_range: ByteRange) {
         let page_size = self.page_size;
-        let start_offset = page_size.align_down(offset);
-        let page_count = page_size.touched_page_count(offset, length);
+        let start_offset = page_size.align_down(byte_range.start());
+        let page_count = page_size.touched_page_count(byte_range.start(), byte_range.length());
         let page_length = page_size.page_length(page_count);
-        let end_offset = start_offset.into_inner().checked_add(page_length)
-            .expect(&format!("page range overflowed ({} + {})", start_offset.into_inner(), page_length));
+        let end_offset = start_offset.as_inner().checked_add(page_length)
+            .expect(&format!("page range overflowed ({} + {})", start_offset.as_inner(), page_length));
         if end_offset > self.max_offset {
             panic!("hint offset {} exceeds maximum memory map offset {}", end_offset, self.max_offset)
         }
         #[cfg(unix)]
         {
-            self.mmap.advise_range(Advice::WillNeed, start_offset.into_inner(), page_length);
+            self.mmap.advise_range(Advice::WillNeed, start_offset.as_inner(), page_length);
         }
         self.worker_handle.prefault(start_offset, page_count);
     }
@@ -308,13 +333,13 @@ impl Mmap {
     ///
     /// Panics if the requested range lies outside the memory map or if the
     /// range calculation overflows.
-    pub(crate) fn dont_need(&self, offset: usize, length: usize) {
+    pub(crate) fn dont_need(&self, byte_range: ByteRange) {
         let page_size = self.page_size;
-        let start_offset = page_size.align_down(offset);
-        let page_count = page_size.reclaimable_pages_count(offset, length);
+        let start_offset = page_size.align_down(byte_range.start());
+        let page_count = page_size.reclaimable_pages_count(byte_range);
         let page_length = page_size.page_length(page_count);
-        let end_offset = start_offset.into_inner().checked_add(page_length)
-            .expect(&format!("page range overflowed ({} + {})", start_offset.into_inner(), page_length));
+        let end_offset = start_offset.as_inner().checked_add(page_length)
+            .expect(&format!("page range overflowed ({} + {})", start_offset.as_inner(), page_length));
         if end_offset > self.max_offset {
             panic!("hint offset {} exceeds maximum memory map offset {}", end_offset, self.max_offset)
         }
@@ -326,7 +351,7 @@ impl Mmap {
         //   not create, invalidate, or relocate Rust references. Any future access
         //   through the mapping remains valid according to the mmap abstraction.
         unsafe {
-            self.mmap.unchecked_advise_range(UncheckedAdvice::DontNeed, start_offset.into_inner(), page_length);
+            self.mmap.unchecked_advise_range(UncheckedAdvice::DontNeed, start_offset.as_inner(), page_length);
         }
     }
 
@@ -337,8 +362,8 @@ impl Mmap {
     ///
     /// Panics if the requested table range extends beyond the source buffer,
     /// or if `offset + length` overflows `usize`.
-    pub(crate) fn table_buffer(source: &Arc<Self>, offset: usize, length: usize) -> Buffer {
-        let end_offset = offset.checked_add(length)
+    pub(crate) fn table_buffer(source: &Arc<Self>, byte_range: ByteRange) -> Buffer {
+        let end_offset = byte_range.start().checked_add(byte_range.length())
             .expect("Table range calculation overflowed usize");
         assert!(end_offset <= source.mmap.len(), "Table range exceeds source buffer bounds");
 
@@ -347,9 +372,9 @@ impl Mmap {
         // - source.mmap.as_mut_ptr() is never null on successful map.
         // - The `Arc<Self>` owner keeps the mmap alive for the liftime of the `Buffer`.
         unsafe {
-            let ptr = source.mmap.as_ptr().add(offset);
+            let ptr = source.mmap.as_ptr().add(byte_range.start());
             let ptr= NonNull::new_unchecked(ptr as *mut u8);
-            Buffer::from_custom_allocation(ptr, length, source.clone())
+            Buffer::from_custom_allocation(ptr, byte_range.length(), source.clone())
         }
     }
 }

@@ -3,17 +3,12 @@
 // third party
 
 // local
-use crate::io::reader::{Local, Atomic};
+use crate::io::reader::ConcurrencyMode;
 
-pub(crate) mod internal {
-    use crate::io::reader::ConcurrencyMode;
+pub trait SignalBufferIterContract<M: ConcurrencyMode>{}
 
-    pub trait SignalBuffer<M: ConcurrencyMode>{}
-
-    pub struct SignalBufferCore<M: ConcurrencyMode>{
-        concurrency_mode:M,
-    }
+pub struct SignalBufferIter<M: ConcurrencyMode> {
+    concurrency_mode: M,
 }
 
-pub type SignalBuffer = internal::SignalBufferCore<Local>;
-pub type ConcurrentSignalBuffer = internal::SignalBufferCore<Atomic>;
+impl<M: ConcurrencyMode> SignalBufferIterContract<M> for SignalBufferIter<M> {}

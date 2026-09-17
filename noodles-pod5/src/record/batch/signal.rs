@@ -1,13 +1,7 @@
 // standard
 
-// third party
-use arrow::array::{
-    LargeBinaryArray,
-    LargeListArray,
-};
-use crate::file::{FileRowIndex, RowIndexOutOfBounds};
 // local
-use crate::io::reader::{Local, Atomic};
+use crate::io::reader::{Atomic, Local};
 
 pub(crate) mod internal {
     // standard
@@ -16,50 +10,42 @@ pub(crate) mod internal {
 
     // local
     use crate::{
-        io::reader::ConcurrencyMode,
         file::{
             FileRowIndex,
-            RowIndexOutOfBounds,
+            IndexOutOfBounds,
         },
-        record::{
-            internal::backend::SignalRecord,
-            batch::{
-                Batch,
-                arrays::*,
-            },
-        }
+        io::reader::ConcurrencyMode,
+        record::internal::contracts::SignalRecordContract
     };
+    use crate::record::batch::BatchCore;
+    // local
+    use crate::record::batch::columns::SignalColumns;
+    use crate::record::iter::{SignalBufferIter, SignalBufferIterContract};
 
     /// Defines the operations of a `SignalBatch`.
-    pub trait SignalBatch<M: ConcurrencyMode>: Batch {
+    pub trait SignalBatch<M: ConcurrencyMode> {
         /// The [`SignalRecord`] implementation returned by [`single_row()`](Self::single_row).
-        type SignalRecord: SignalRecord<M::LocalAccess>;
+        type SignalRecord: SignalRecordContract<M::InitialReferenceModel<SignalColumns>>;
+
+        /// The [`SignalBufferIter`] implementation returned by [`records()`](Self::records).
+        type SignalBufferIter: SignalBufferIterContract<M>;
 
         /// Returns a single [`SignalRecord`](Self::SignalRecord) by
         /// its [`FileRowIndex`].
         ///
         /// # Errors
         ///
-        /// Returns [`RowIndexOutOfBounds`] if `global_row` points outside the
+        /// Returns [`IndexOutOfBounds`] if `global_row` points outside the
         /// current batch's boundaries.
-        fn single_row(&self, global_row: FileRowIndex) -> Result<Self::SignalRecord, RowIndexOutOfBounds>;
+        fn single_row(&self, global_row: FileRowIndex) -> Result<Self::SignalRecord, IndexOutOfBounds>;
 
-        // --- Core Column ---
-        /// Returns the stored down-casted `read_id` column.
-        fn read_id_column(&self) -> &UuidArray;
-
-        // --- Core Column ---
-        /// Returns the stored down-casted `read_id` column.
-        fn signal_column(&self) -> &LargeDataSet;
-
-        // --- Core Column (Recoverable) ---
-        /// Returns the stored down-casted `read_id` column.
-        fn sample_column(&self) -> &UInt32Array;
+        /// Returns a variant of a [`SignalBufferIter`](Self::SignalBufferIter) of the records in this batch.
+        fn records(&self) -> Self::SignalBufferIter;
     }
 
-    pub struct SignalBatchCore<M: ConcurrencyMode>{
-        concurrency_mode:M,
-    }
+    pub type SignalBatchCore<M: ConcurrencyMode> = BatchCore<M, SignalColumns>;
+
+    // impl<M: ConcurrencyMode> SignalBatch<M> for SignalBatchCore<M> {}
 }
 
 #[cfg_attr(feature = "backend", doc = "The single-threaded variant of the [`SignalBatch`](internal::SignalBatchCore) generic.")]
